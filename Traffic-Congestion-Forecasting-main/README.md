@@ -172,9 +172,33 @@ What it does:
   limits and other errors are reported on the page and draw nothing.
 * The time shown is **"Last fetched"** (this computer's clock when the app received the response). The API provides no
   measurement time, so none is shown. A reading older than 10 minutes is labelled stale and drawn in grey.
-* Provider data is kept **in memory only** (about 5 minutes cache; a refresh is allowed at most every 30 seconds; at most
-  300 provider requests per app run, adjustable with the `LIVE_MAX_REQUESTS` environment variable). Nothing is written
-  to disk, because TomTom's storage/caching terms have not been verified.
+* Provider data is kept **in memory only**. Nothing is written to disk, because TomTom's storage/caching terms have not
+  been verified. Safeguards (all in `src/live/tomtom.py`, tested with mocked responses):
+
+  | Safeguard | Setting |
+  |---|---|
+  | In-memory cache: a repeated request for the same point (about 11 m) reuses the reading | 300 s; override with `LIVE_CACHE_TTL_S`. With `0` no reading is kept or reused at all (see below) |
+  | Refresh limit: an explicit refresh inside this window is answered from memory (with `LIVE_CACHE_TTL_S=0` it is refused instead, and the reading already on screen stays) | 30 s |
+  | Simultaneous requests for the same point share **one** provider request | always on |
+  | Request cap per app run (a failed attempt counts; cache hits do not) | 300; override with `LIVE_MAX_REQUESTS` |
+  | After HTTP 429 no provider request is sent for a while | 60 s |
+  | Cache size limit | 200 readings |
+  | A reading older than 10 minutes is labelled stale and never coloured as current | 600 s |
+
+  **`LIVE_CACHE_TTL_S=0` (strictest setting):** every request goes to TomTom and nothing is retained between requests;
+  only the time of the last request per point is remembered, to enforce the 30 s refresh limit, the 429 cooldown and the
+  request cap. Simultaneous requests for the same point still share one provider call while it is in progress. The
+  reading already shown on the page remains visible with its own "Last fetched" time (and becomes stale after 10 minutes).
+  To set it for your Windows user (new terminals only; remove it again with the second line):
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable("LIVE_CACHE_TTL_S", "0", "User")
+  [Environment]::SetEnvironmentVariable("LIVE_CACHE_TTL_S", $null, "User")
+  ```
+
+  The request cap is per application run, so restarting the app resets it; it is **not** a monthly quota. TomTom's
+  pricing page (read 2026-10-29) lists 20,000 free monthly requests for Flow Segment Data, but your key's actual
+  allowance and limits should be checked in your TomTom account.
 * The key is used only by the Python server process; it is never sent to the browser or displayed.
 
 ### Setting up `TOMTOM_API_KEY` (optional)
@@ -198,6 +222,24 @@ success path is covered only by tests with mocked responses that were written fr
 recorded from the service). Against the real TomTom endpoint, only the "key rejected" (HTTP 401) error path was checked,
 using a deliberately invalid key. The real behaviour with a valid key (response details, coverage of a given road,
 quotas, terms of use) is untested. The Nominatim search was tested with one real request.
+
+### TomTom terms: what has and has not been verified
+
+Checked on 2026-10-29 in TomTom's public documentation:
+[Flow Segment Data](https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/traffic-flow/flow-segment-data)
+(request and response format, status codes 400/403/429/500/503; the response carries **no timestamp**, and its
+`Cache-Control` header is `public, max-age=0`) and the [pricing page](https://docs.tomtom.com/pricing).
+
+**Not verified:** the TomTom developer terms that govern caching, storage, display and attribution of traffic data could
+not be read (the page links to them but they were not available to the tool used), TomTom's general
+[Terms of Use](https://www.tomtom.com/en_us/legal/terms-of-use/) are website terms and say nothing about API data, and no
+official page confirming coverage of Bengaluru for this endpoint was found. Consequences:
+
+* Readings are **not stored** and **not used to build datasets or train or evaluate models**. Do not change this until
+  the terms are read and explicitly allow it.
+* Whether reusing a reading for up to 5 minutes is allowed is **unconfirmed**; the response's `max-age=0` header suggests
+  clients should not rely on cached copies. The strictest behaviour is `LIVE_CACHE_TTL_S=0` (see above).
+* Whether this endpoint returns data for a given Bengaluru road is only known by trying it with a valid key.
 
 ### Colour bands are display conventions
 

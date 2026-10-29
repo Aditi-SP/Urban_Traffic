@@ -25,7 +25,7 @@ from src.ui.common import get_data, tomtom_key
 LAYERS = ["Traffic segment", "Selected place"]
 MAP_HEIGHT = 500
 SEVERITY = {"no_key": "error", "auth": "error", "invalid_response": "error", "no_segment": "info",
-            "timeout": "warning", "network": "warning", "server": "warning", "rate_limited": "warning", "budget": "warning"}
+            "timeout": "warning", "network": "warning", "server": "warning", "rate_limited": "warning", "budget": "warning", "throttled": "info"}
 BAND_TEXT = {"free": ("Free-flowing", "ok", theme.GREEN), "slow": ("Slow", "warn", theme.AMBER),
              "congested": ("Congested", "bad", theme.RED), "closed": ("Road closed", "bad", theme.RED),
              "stale": ("Stale reading", "mute", theme.MUTED)}

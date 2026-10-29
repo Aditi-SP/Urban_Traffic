@@ -38,7 +38,9 @@ CACHE_TTL_S = 300               # a repeated request for the same point within 5
 MIN_REFRESH_S = 30              # an explicit refresh is not sent to the provider more often than this
 STALE_AFTER_S = 600             # a reading older than 10 min is shown as stale, never as current
 RUN_BUDGET_DEFAULT = 300        # provider requests per application run (free tier: 20,000 per month, per TomTom's pricing page)
-MAX_SEGMENT_OFFSET_KM = 5.0     # the returned segment must lie near the point that was asked for
+RATE_LIMIT_COOLDOWN_S = 60      # after an HTTP 429, no provider request is sent for this long
+MAX_CACHE_ENTRIES = 200         # bound on the in-memory cache
+MAX_SEGMENT_OFFSET_KM = 5.0    # the returned segment must lie near the point that was asked for
 
 # Display bands: this application's convention, based on current speed as a share of free-flow speed.
 # They are NOT provider categories and are NOT validated against the dataset's Congestion Level.
@@ -170,14 +172,35 @@ def fetch_flow(lat, lon, api_key, *, http_get=None, clock=time.time) -> FlowObse
     return parse_response(payload, lat, lon, clock())
 
 
-class FlowService:
-    """In-memory cache + request budget around fetch_flow. Nothing is written to disk."""
+class _Flight:
+    """One provider request that is in progress; callers asking for the same point meanwhile wait for its result."""
 
-    def __init__(self, fetcher=None, clock=time.time, ttl=CACHE_TTL_S, min_refresh=MIN_REFRESH_S, budget=None):
-        self._fetcher, self._clock, self.ttl, self.min_refresh = fetcher, clock, ttl, min_refresh
+    def __init__(self):
+        self.event = threading.Event()
+        self.obs = None
+        self.error = None
+
+
+class FlowService:
+    """In-memory cache + request budget around fetch_flow. Nothing is written to disk.
+
+    Safeguards (all enforced in get(), under one lock):
+      * cache: a reading younger than `ttl` is reused; an explicit refresh reuses one younger than `min_refresh`.
+        With ttl == 0 NO reading is kept or reused between requests; the refresh limit is then enforced from the time of the
+        last provider request alone (an explicit refresh inside `min_refresh` is refused with kind 'throttled');
+      * in-flight sharing: simultaneous requests for the same point cause ONE provider request;
+      * budget: at most `budget` provider requests per application run (an attempt that fails still counts);
+      * cooldown: after HTTP 429 no provider request is sent for RATE_LIMIT_COOLDOWN_S (cached readings are still served);
+      * the cache holds at most MAX_CACHE_ENTRIES readings.
+    """
+
+    def __init__(self, fetcher=None, clock=time.time, ttl=None, min_refresh=MIN_REFRESH_S, budget=None):
+        self._fetcher, self._clock, self.min_refresh = fetcher, clock, min_refresh
+        self.ttl = ttl if ttl is not None else _env_number("LIVE_CACHE_TTL_S", CACHE_TTL_S, minimum=0)
         self.budget = budget if budget is not None else _env_budget()
         self.requests_made = 0
-        self._cache, self._lock = {}, threading.Lock()
+        self._cooldown_until = 0.0
+        self._cache, self._last_request, self._inflight, self._lock = {}, {}, {}, threading.Lock()
 
     @staticmethod
     def _key(lat, lon):
@@ -188,34 +211,78 @@ class FlowService:
         lat, lon = geo.validate_location(lat, lon)
         k = self._key(lat, lon)
         with self._lock:
+            now = self._clock()
             hit = self._cache.get(k)
             if hit is not None:
-                age = age_s(hit, self._clock())
+                age = age_s(hit, now)
                 if (not force and age < self.ttl) or (force and age < self.min_refresh):
                     return hit, "cache"
-            if self.requests_made >= self.budget:
-                raise _err("budget", f"The limit of {self.budget} provider requests for this run was reached (it protects the free monthly quota). "
-                                     "Restart the app or raise LIVE_MAX_REQUESTS to continue.")
-            self.requests_made += 1
-        if self._fetcher is None:
-            obs = fetch_flow(lat, lon, api_key, clock=self._clock)
-        else:
-            obs = self._fetcher(lat, lon, api_key)
-        with self._lock:
-            self._cache[k] = obs
-        return obs, "provider"
+            flight = self._inflight.get(k)
+            leader = flight is None
+            if leader:
+                last = self._last_request.get(k)
+                if force and self.ttl <= 0 and last is not None and now - last < self.min_refresh:
+                    raise _err("throttled", f"Refreshes are limited to once every {self.min_refresh} seconds. "
+                                            "The reading on screen is the latest one fetched.")
+                if now < self._cooldown_until:
+                    raise _err("rate_limited", "TomTom recently reported too many requests, so no new request is sent yet. "
+                                               f"Please wait about {int(self._cooldown_until - now) + 1} seconds.")
+                if self.requests_made >= self.budget:
+                    raise _err("budget", f"The limit of {self.budget} provider requests for this run was reached (it protects the free monthly quota). "
+                                         "Restart the app or raise LIVE_MAX_REQUESTS to continue.")
+                self.requests_made += 1
+                self._last_request[k] = now  # only a time, never provider data
+                while len(self._last_request) > MAX_CACHE_ENTRIES:
+                    del self._last_request[min(self._last_request, key=self._last_request.get)]
+                flight = self._inflight[k] = _Flight()
+
+        if not leader:  # the same point is already being requested: share that one request instead of sending another
+            if not flight.event.wait(sum(TIMEOUT) + 2):
+                raise _err("timeout", "TomTom did not answer in time. Please try again.")
+            if flight.error is not None:
+                raise flight.error
+            return flight.obs, "cache"
+
+        try:
+            if self._fetcher is None:
+                obs = fetch_flow(lat, lon, api_key, clock=self._clock)
+            else:
+                obs = self._fetcher(lat, lon, api_key)
+            flight.obs = obs
+            with self._lock:
+                if self.ttl > 0:  # with ttl 0 nothing is kept after the request (callers that waited on it already have the result)
+                    self._cache[k] = obs
+                while len(self._cache) > MAX_CACHE_ENTRIES:
+                    del self._cache[min(self._cache, key=lambda c: self._cache[c].fetched_at)]
+            return obs, "provider"
+        except BaseException as e:
+            flight.error = e
+            if isinstance(e, ProviderError) and e.kind == "rate_limited":
+                with self._lock:
+                    self._cooldown_until = self._clock() + RATE_LIMIT_COOLDOWN_S
+            raise
+        finally:
+            with self._lock:
+                self._inflight.pop(k, None)
+            flight.event.set()
 
     def clear(self):
         with self._lock:
             self._cache.clear()
+            self._last_request.clear()
             self.requests_made = 0
+            self._cooldown_until = 0.0
+
+
+def _env_number(name, default, minimum):
+    try:
+        return max(minimum, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
 
 
 def _env_budget() -> int:
-    try:
-        return max(1, int(os.environ.get("LIVE_MAX_REQUESTS", RUN_BUDGET_DEFAULT)))
-    except ValueError:
-        return RUN_BUDGET_DEFAULT
+    return _env_number("LIVE_MAX_REQUESTS", RUN_BUDGET_DEFAULT, minimum=1)
 
 
 SERVICE = FlowService()  # the instance the dashboard uses

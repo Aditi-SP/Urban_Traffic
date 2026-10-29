@@ -20,6 +20,7 @@ from unittest import mock
 
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
+os.environ.pop("LIVE_CACHE_TTL_S", None)  # tests must not depend on a local runtime setting; tests that need it set it themselves
 
 import requests  # noqa: E402
 
