@@ -112,7 +112,7 @@ python -m src.modelTraining.comparePerformancePlots
 # tests
 python -m unittest discover -s tests -v               # core software tests (skip cleanly if the dataset/models are absent)
 python -m unittest discover -s docs_tests -v          # separate: checks paper/slides against model/metrics.json (read-only)
-python tests/failure_matrix.py                        # 26 broken-project scenarios + Spark-without-Java, on scratch copies (about 7 min)
+python tests/failure_matrix.py                        # 27 broken-project scenarios + Spark-without-Java, on scratch copies (about 7 min)
 # real-browser check (start the dashboard first, e.g. .\run_dashboard.ps1 -Port 8599 -NoBrowser; needs Chrome or Edge):
 python tests/browser_check.py shots 1536 700 8599
 
@@ -153,6 +153,75 @@ python -m src.modelTraining.predictLstm
   (see `.streamlit/secrets.toml.example`).
 * A 2–3 minute presentation script is in [DEMO_SCRIPT.md](DEMO_SCRIPT.md).
 
+## Live Traffic Map (dashboard page)
+
+**Purpose:** a first step towards live monitoring. You search for a place in Bengaluru, pick a result, and, if a TomTom
+key is configured, the page requests the current traffic of the road segment nearest to that place and draws it on the
+map. It is a separate, read-only view of provider observations. **It is not connected to the forecasting models**: their
+inputs (volume, capacity, incidents, weather, history) are not available from the provider, so no live reading is ever
+fed to them and no prediction is made from it. The historical dataset has no coordinates, so none of its roads are placed
+on the map.
+
+What it does:
+
+* Shows an OpenStreetMap basemap centred on Bengaluru. With no key, or before anything is selected, the map is simply
+  the basemap: no markers and no traffic values are drawn.
+* Place search (Nominatim) runs only when you press **Search** (no autocomplete), is limited to the Bengaluru area, and
+  results are cached in memory.
+* Traffic is drawn only from a valid provider response for the place you selected. Invalid responses, timeouts, rate
+  limits and other errors are reported on the page and draw nothing.
+* The time shown is **"Last fetched"** (this computer's clock when the app received the response). The API provides no
+  measurement time, so none is shown. A reading older than 10 minutes is labelled stale and drawn in grey.
+* Provider data is kept **in memory only** (about 5 minutes cache; a refresh is allowed at most every 30 seconds; at most
+  300 provider requests per app run, adjustable with the `LIVE_MAX_REQUESTS` environment variable). Nothing is written
+  to disk, because TomTom's storage/caching terms have not been verified.
+* The key is used only by the Python server process; it is never sent to the browser or displayed.
+
+### Setting up `TOMTOM_API_KEY` (optional)
+
+The map and place search work without a key; only the traffic reading needs one. Never put a real key in source files or
+commit it.
+
+```powershell
+# for the current PowerShell window only, then start the dashboard from the same window
+$env:TOMTOM_API_KEY = "your-key-here"
+.\run_dashboard.ps1
+```
+
+Alternatively copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (git-ignored) and replace the
+placeholder. `your-key-here` is a placeholder, not a working key.
+
+### Verification status of the TomTom integration
+
+**A successful live TomTom response has not been verified.** No valid API key was available during development. The
+success path is covered only by tests with mocked responses that were written from TomTom's published documentation (not
+recorded from the service). Against the real TomTom endpoint, only the "key rejected" (HTTP 401) error path was checked,
+using a deliberately invalid key. The real behaviour with a valid key (response details, coverage of a given road,
+quotas, terms of use) is untested. The Nominatim search was tested with one real request.
+
+### Colour bands are display conventions
+
+Segments are coloured by current speed as a share of free-flow speed: **80% or more = free-flowing (green), 50% to under
+80% = slow (amber), under 50% = congested (red)**; a reported road closure is red and a stale reading is grey. These
+bands and thresholds are defined by this app for display only. They are not categories returned by TomTom and **are not
+validated traffic thresholds**; they have not been checked against any ground truth.
+
+### Attribution and usage limits
+
+* Map data: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (Open Database Licence). Place search
+  uses OpenStreetMap's [Nominatim](https://operations.osmfoundation.org/policies/nominatim/) service, shown on the page as
+  "via Nominatim". Traffic data, when shown, is attributed to TomTom.
+* Nominatim's public service allows at most 1 request per second, requires an identifying User-Agent, and forbids
+  autocomplete-style searching. The app follows this (searches only on button press, a wait of at least 1.1 s between
+  requests, cached results).
+* **Basemap tiles come from OpenStreetMap's standard tile server (`tile.openstreetmap.org`).** Its usage policy does not
+  allow heavy use, and it offers no service guarantee. That is acceptable for a local demo or coursework, but **not for a
+  production deployment or many users**: use a commercial or self-hosted tile provider (and check its attribution
+  rules) before any wider use.
+* The map is drawn with Leaflet 1.9.4 (BSD 2-Clause licence), bundled in `src/ui/vendor/leaflet/` and checked against its
+  published integrity hashes each time it loads, so the browser loads no script from a CDN. It is not updated
+  automatically.
+
 ## Big-data component
 
 `src/bigdata/spark_analysis.py` uses PySpark (local mode, one machine) to validate/clean the CSV (FAILFAST schema, null,
@@ -180,6 +249,8 @@ horizon, features, metrics, artifact hashes, software versions and limitations.
     │   ├── app/demo.py, realtime.py          demo logic and real-time interface
     │   ├── bigdata/spark_analysis.py         PySpark workflow
     │   ├── dataProcessing/forecast_data.py   shared pipeline (features, windows, split)
+    │   ├── live/geo.py, geocode.py, tomtom.py    Live Traffic Map: location checks, Nominatim search, TomTom client
+    │   ├── ui/                               dashboard pages/navigation (live_map.py, leaflet_map.py, vendor/leaflet/)
     │   ├── dataProcessing/preprocess2.py, preprocess_xgboost.py   LEGACY, not used for training
     │   └── modelTraining/  trainXgboost.py, trainLstm2.py, comparePerformancePlots.py,
     │                       predictXgboost.py, predictLstm.py
