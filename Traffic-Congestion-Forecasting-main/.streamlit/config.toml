@@ -1,0 +1,22 @@
+# Dashboard settings (read by `streamlit run app.py` when started from this folder).
+
+[client]
+# "viewer" hides the Deploy button and the developer menu: this is a local demo, not a deployed app.
+toolbarMode = "viewer"
+
+[browser]
+# No telemetry.
+gatherUsageStats = false
+
+[server]
+# Do not watch files for changes while presenting (avoids surprise reruns).
+runOnSave = false
+
+[theme]
+# Dark navy base; the extra styling (cards, status chips) is in src/ui/theme.py.
+base = "dark"
+primaryColor = "#38BDF8"
+backgroundColor = "#0B1426"
+secondaryBackgroundColor = "#111C33"
+textColor = "#E6EDF7"
+font = "sans serif"

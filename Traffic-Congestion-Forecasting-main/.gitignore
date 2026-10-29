@@ -1,0 +1,83 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Jupyter Notebook
+# -------------
+# .ipynb_checkpoints/
+# *.ipynb
+# -----------
+# IDE specific files
+.vscode/
+.idea/
+
+# Data files (exclude large/raw datasets)
+*.csv
+*.xlsx
+*.parquet
+*.feather
+
+# Environment variables
+secrets.env
+
+# Build/installation files
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Local development files
+local-settings.json
+*.tmp
+*.swp
+
+# keep generated prediction files
+!model/*.csv
+
+# keep Spark result tables
+!reports/**/*.csv
+
+# API secrets
+.streamlit/secrets.toml
+
+# Jupyter temporary files
+.ipynb_checkpoints/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Backup files
+*.bak
+
+# Jupyter temporary files
+.ipynb_checkpoints/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Backup files
+*.bak
+
+# Local backup directories
+audit_backup/
+original_backup/
+backup_before_final_corrections/

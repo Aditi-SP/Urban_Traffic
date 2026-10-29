@@ -1,0 +1,205 @@
+{
+  "generated_utc": "2026-10-28T13:51:37+00:00",
+  "dataset": {
+    "file": "data/raw/Banglore_traffic_Dataset.csv",
+    "source": "Kaggle dataset preethamgouda/banglore-city-traffic-dataset (downloaded from Kaggle)",
+    "provenance_note": "Kaggle/third-party descriptions say it derives from Government of Karnataka open traffic data; this was NOT verified from an authoritative source.",
+    "license": "NOT VERIFIED - check the Kaggle page",
+    "rows": 8936,
+    "roads": 16,
+    "granularity": "daily (no hour-of-day)"
+  },
+  "target": "Congestion Level (0-100) of the same road on day t+1",
+  "forecast_horizon": "1 day",
+  "history_window": "last 7 observations of the road (not 7 calendar days)",
+  "split": {
+    "train_targets_to": "2023-10-30",
+    "validation_targets_to": "2024-03-20",
+    "test_targets": [
+      "2024-03-21",
+      "2024-08-09"
+    ],
+    "type": "chronological",
+    "n_test_samples": 856,
+    "n_samples_total": 5754
+  },
+  "identical_test_rows_for_all_models": true,
+  "lstm_features": [
+    "Congestion Level",
+    "Average Speed",
+    "Traffic Volume",
+    "Travel Time Index",
+    "Road Capacity Utilization",
+    "Incident Reports",
+    "Weather_Clear",
+    "Weather_Fog",
+    "Weather_Overcast",
+    "Weather_Rain",
+    "Weather_Windy",
+    "days_since_prev",
+    "Road_100 Feet Road",
+    "Road_Anil Kumble Circle",
+    "Road_Ballari Road",
+    "Road_CMH Road",
+    "Road_Hebbal Flyover",
+    "Road_Hosur Road",
+    "Road_ITPL Main Road",
+    "Road_Jayanagar 4th Block",
+    "Road_Marathahalli Bridge",
+    "Road_Sarjapur Road",
+    "Road_Silk Board Junction",
+    "Road_Sony World Junction",
+    "Road_South End Circle",
+    "Road_Trinity Circle",
+    "Road_Tumkur Road",
+    "Road_Yeshwanthpur Circle"
+  ],
+  "xgboost_features": [
+    "Congestion Level",
+    "Average Speed",
+    "Traffic Volume",
+    "Travel Time Index",
+    "Road Capacity Utilization",
+    "Incident Reports",
+    "Weather_Clear",
+    "Weather_Fog",
+    "Weather_Overcast",
+    "Weather_Rain",
+    "Weather_Windy",
+    "days_since_prev",
+    "Road_100 Feet Road",
+    "Road_Anil Kumble Circle",
+    "Road_Ballari Road",
+    "Road_CMH Road",
+    "Road_Hebbal Flyover",
+    "Road_Hosur Road",
+    "Road_ITPL Main Road",
+    "Road_Jayanagar 4th Block",
+    "Road_Marathahalli Bridge",
+    "Road_Sarjapur Road",
+    "Road_Silk Board Junction",
+    "Road_Sony World Junction",
+    "Road_South End Circle",
+    "Road_Trinity Circle",
+    "Road_Tumkur Road",
+    "Road_Yeshwanthpur Circle",
+    "Congestion Level_prev1",
+    "Congestion Level_prev2",
+    "Congestion Level_mean3",
+    "Traffic Volume_prev1",
+    "Traffic Volume_prev2",
+    "Traffic Volume_mean3",
+    "Average Speed_prev1",
+    "Average Speed_prev2",
+    "Average Speed_mean3",
+    "Congestion Level_mean7",
+    "target_dayofweek",
+    "target_is_weekend",
+    "target_month_sin",
+    "target_month_cos"
+  ],
+  "metrics": {
+    "LSTM": {
+      "MAE": 15.462974570810147,
+      "RMSE": 19.933043022650168,
+      "R2": 0.1999514779046384
+    },
+    "XGBoost": {
+      "MAE": 15.93097816266357,
+      "RMSE": 20.074052233915065,
+      "R2": 0.18859212420059246
+    },
+    "Persistence baseline": {
+      "MAE": 19.104881326348185,
+      "RMSE": 28.2320791832198,
+      "R2": -0.6049253834949104
+    },
+    "Road-mean baseline": {
+      "MAE": 15.33798281045207,
+      "RMSE": 19.846221802036542,
+      "R2": 0.2069057512773571
+    }
+  },
+  "uncertainty": {
+    "method": "cluster bootstrap by test date, 4000 resamples, seed 0",
+    "rmse_ci95": {
+      "LSTM": [
+        18.798123927387888,
+        21.07021579337325
+      ],
+      "XGBoost": [
+        18.962752396594553,
+        21.178017772177725
+      ],
+      "Persistence baseline": [
+        26.698982608337005,
+        29.700341982740436
+      ],
+      "Road-mean baseline": [
+        18.707485861696057,
+        20.980090467036725
+      ]
+    },
+    "rmse_difference": {
+      "LSTM - Road-mean baseline": {
+        "observed": 0.08721732502629667,
+        "ci95": [
+          -0.03788031502730602,
+          0.2069315528544143
+        ],
+        "ci_excludes_zero": false
+      },
+      "XGBoost - Road-mean baseline": {
+        "observed": 0.2256719282054505,
+        "ci95": [
+          -0.10272059955761978,
+          0.5596661517255984
+        ],
+        "ci_excludes_zero": false
+      },
+      "LSTM - XGBoost": {
+        "observed": -0.1384546031791538,
+        "ci95": [
+          -0.4998185112218579,
+          0.22842581156207645
+        ],
+        "ci_excludes_zero": false
+      }
+    }
+  },
+  "artifact_sha256_prefix": {
+    "model.h5": "c635e002b88d",
+    "scaler.pkl": "06de6e2e9b93",
+    "xgboost_model.json": "965a03e5e6cd"
+  },
+  "software": {
+    "python": "3.11.9",
+    "numpy": "1.26.4",
+    "pandas": "2.1.1",
+    "scikit-learn": "1.6.1",
+    "tensorflow": "2.16.1",
+    "keras": "3.15.1",
+    "xgboost": "3.2.0"
+  },
+  "dataset_facts": {
+    "rows": 8936,
+    "roads": 16,
+    "pct_congestion_at_100": 43.464637421665174,
+    "lag1_corr_consecutive_days": 0.20528435318565091,
+    "pct_windows_spanning_over_7_days": 56.760514424747996,
+    "mean_congestion_when_next_day_observed": 83.88563553745875,
+    "mean_congestion_when_next_day_missing": 75.1025444941306,
+    "n_samples_total": 5754
+  },
+  "limitations": [
+    "Single chronological split; no cross-validation; test period about 4.5 months.",
+    "Daily, gappy data: samples exist only where the road was observed on days t and t+1.",
+    "Selection effect: mean congestion on day t is 83.9 when day t+1 is observed vs 75.1 when it is missing, so evaluation is conditional on the next day being observed.",
+    "57% of input windows span more than 7 calendar days (a window is the last 7 observations; days_since_prev is a feature).",
+    "Next-day congestion is only weakly predictable (lag-1 correlation 0.21).",
+    "43% of congestion values are exactly 100 (a cap); the data looks synthetic/aggregated, which is an inference, not a verified fact.",
+    "LSTM numbers come from one training run (one seed); TensorFlow is not bit-deterministic.",
+    "Predictions are clipped to the physical range [0, 100].",
+    "No prediction intervals are produced; the bootstrap CIs above describe test-set RMSE uncertainty only."
+  ]
+}

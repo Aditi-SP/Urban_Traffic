@@ -1,0 +1,77 @@
+{
+  "n_test_samples": 856,
+  "uncertainty": {
+    "method": "cluster bootstrap by test date, 4000 resamples, seed 0",
+    "rmse_ci95": {
+      "LSTM": [
+        18.798123927387888,
+        21.07021579337325
+      ],
+      "XGBoost": [
+        18.962752396594553,
+        21.178017772177725
+      ],
+      "Persistence baseline": [
+        26.698982608337005,
+        29.700341982740436
+      ],
+      "Road-mean baseline": [
+        18.707485861696057,
+        20.980090467036725
+      ]
+    },
+    "rmse_difference": {
+      "LSTM - Road-mean baseline": {
+        "observed": 0.08721732502629667,
+        "ci95": [
+          -0.03788031502730602,
+          0.2069315528544143
+        ],
+        "ci_excludes_zero": false
+      },
+      "XGBoost - Road-mean baseline": {
+        "observed": 0.2256719282054505,
+        "ci95": [
+          -0.10272059955761978,
+          0.5596661517255984
+        ],
+        "ci_excludes_zero": false
+      },
+      "LSTM - XGBoost": {
+        "observed": -0.1384546031791538,
+        "ci95": [
+          -0.4998185112218579,
+          0.22842581156207645
+        ],
+        "ci_excludes_zero": false
+      }
+    }
+  },
+  "test_period": [
+    "2024-03-21",
+    "2024-08-09"
+  ],
+  "target": "Congestion Level, next day, per road",
+  "metrics": {
+    "LSTM": {
+      "MAE": 15.462974570810147,
+      "RMSE": 19.933043022650168,
+      "R2": 0.1999514779046384
+    },
+    "XGBoost": {
+      "MAE": 15.93097816266357,
+      "RMSE": 20.074052233915065,
+      "R2": 0.18859212420059246
+    },
+    "Persistence baseline": {
+      "MAE": 19.104881326348185,
+      "RMSE": 28.2320791832198,
+      "R2": -0.6049253834949104
+    },
+    "Road-mean baseline": {
+      "MAE": 15.33798281045207,
+      "RMSE": 19.846221802036542,
+      "R2": 0.2069057512773571
+    }
+  }
+}

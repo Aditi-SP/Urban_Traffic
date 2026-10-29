@@ -1,0 +1,16 @@
+# Core dependencies of the dashboard, the models and the evaluation scripts.
+# Tested on Python 3.11 (Windows). TensorFlow 2.16 needs NumPy < 2, so PyArrow is pinned
+# to a release that works with NumPy 1.x.
+# PySpark (optional, needs Java) lives in requirements-bigdata.txt so this file stays lightweight.
+numpy==1.26.4
+pandas==2.1.1
+scikit-learn==1.6.1     # scaler.pkl was saved with 1.6.1
+tensorflow==2.16.1
+keras==3.15.1           # model.h5 loads with this Keras 3 (needed for the batch_shape field)
+xgboost==3.2.0
+joblib==1.6.0
+streamlit==1.40.2
+pyarrow==20.0.0         # 26.x requires NumPy 2
+plotly==7.1.0
+matplotlib==3.9.4       # training / comparison scripts (plots)
+requests==2.31.0        # real-time provider interface (unverified against the live service)

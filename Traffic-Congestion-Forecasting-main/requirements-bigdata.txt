@@ -1,0 +1,7 @@
+# OPTIONAL: only needed to re-run the PySpark script (python -m src.bigdata.spark_analysis).
+# The dashboard does NOT need this file; it only reads the saved results in reports/spark/.
+# PySpark also needs Java 17 or newer on the machine (tested with Java 25). It runs in local mode on ONE computer.
+#
+#   pip install -r requirements-bigdata.txt
+-r requirements.txt
+pyspark==4.2.1

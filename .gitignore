@@ -1,0 +1,24 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+# Project backup folders
+Traffic-Congestion-Forecasting-main/audit_backup/
+Traffic-Congestion-Forecasting-main/model/original_backup/
+Traffic-Congestion-Forecasting-main/doucments/backup_before_final_corrections/
+Traffic-Congestion-Forecasting-main/doucments/original_backup/
+
+# Personal study notes
+Traffic-Congestion-Forecasting-main/doucments/notes/
+
+# Temporary notebook checkpoints
+Traffic-Congestion-Forecasting-main/**/.ipynb_checkpoints/
+
+# Backup files
+Traffic-Congestion-Forecasting-main/**/*.bak
+
+Traffic-Congestion-Forecasting-main/doucments/

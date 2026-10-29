@@ -1,0 +1,6 @@
+===== Next-day congestion forecast: held-out test comparison =====
+Test samples: 856  (2024-03-21 .. 2024-08-09)
+LSTM: MAE=15.4630, RMSE=19.9330, R2=0.2000
+XGBoost: MAE=15.9310, RMSE=20.0741, R2=0.1886
+Persistence baseline: MAE=19.1049, RMSE=28.2321, R2=-0.6049
+Road-mean baseline: MAE=15.3380, RMSE=19.8462, R2=0.2069

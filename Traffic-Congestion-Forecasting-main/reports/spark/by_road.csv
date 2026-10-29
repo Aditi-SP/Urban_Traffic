@@ -1,0 +1,17 @@
+Area Name,Road/Intersection Name,n_obs,mean_congestion,p90_congestion,pct_at_100,mean_speed,mean_volume,mean_capacity_util,mean_incidents
+Electronic City,Hosur Road,277,55.204,81.147,2.89,43.992,16557.2,77.583,0.758
+Electronic City,Silk Board Junction,275,53.7,87.346,3.27,43.33,16134.5,74.924,0.804
+Hebbal,Ballari Road,476,79.515,100.0,36.55,39.957,26272.6,92.631,1.603
+Hebbal,Hebbal Flyover,474,80.662,100.0,39.45,40.344,26794.9,92.814,1.532
+Indiranagar,100 Feet Road,860,87.107,100.0,57.21,38.429,31956.9,95.669,1.803
+Indiranagar,CMH Road,860,88.176,100.0,59.42,38.86,32611.9,95.848,1.751
+Jayanagar,Jayanagar 4th Block,580,76.713,100.0,26.72,40.149,24496.2,91.533,1.448
+Jayanagar,South End Circle,593,77.277,100.0,28.5,39.439,24704.1,91.505,1.518
+Koramangala,Sarjapur Road,680,93.845,100.0,73.97,36.146,40190.0,97.392,1.882
+Koramangala,Sony World Junction,684,94.125,100.0,77.05,35.98,41470.8,97.462,1.811
+M.G. Road,Anil Kumble Circle,759,90.782,100.0,62.58,37.395,35251.8,96.609,1.812
+M.G. Road,Trinity Circle,742,90.373,100.0,64.02,37.678,35350.1,96.499,1.919
+Whitefield,ITPL Main Road,450,71.101,100.0,18.22,41.972,21866.0,88.341,1.336
+Whitefield,Marathahalli Bridge,492,67.183,100.0,13.01,42.295,20773.0,85.539,1.222
+Yeshwanthpur,Tumkur Road,361,60.949,94.555,6.65,43.946,18574.5,82.181,1.022
+Yeshwanthpur,Yeshwanthpur Circle,373,63.744,97.963,7.77,42.965,19277.1,82.603,1.145

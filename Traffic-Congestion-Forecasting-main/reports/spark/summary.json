@@ -1,0 +1,14 @@
+{
+  "engine": "PySpark 4.2.1, local[*] on a single machine (not a cluster, not streaming)",
+  "input": "Banglore_traffic_Dataset.csv",
+  "rows_read": 8936,
+  "rows_null_keys": 0,
+  "rows_duplicate_date_road": 0,
+  "rows_out_of_range_congestion": 0,
+  "rows_after_cleaning": 8936,
+  "date_min": "2022-01-01",
+  "date_max": "2024-08-09",
+  "n_roads": 16,
+  "has_hour_of_day": false,
+  "note": "Dataset is daily: weekday/month analysis is possible, hour-of-day rush-hour analysis is not."
+}
