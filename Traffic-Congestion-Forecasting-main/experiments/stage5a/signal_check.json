@@ -1,0 +1,1093 @@
+{
+  "stage": "5A signal-gate benchmark",
+  "provenance": {
+    "dataset_file": "data/raw/Banglore_traffic_Dataset.csv",
+    "dataset_sha256_prefix": "2d7636e53b64"
+  },
+  "seed": 0,
+  "n_boot": 2000,
+  "n_perm": 1000,
+  "data": {
+    "observations": 8936,
+    "roads": 16,
+    "date_range": [
+      "2022-01-01",
+      "2024-08-09"
+    ]
+  },
+  "samples": {
+    "total": 5754,
+    "split_target_dates_and_counts": {
+      "train": [
+        "2022-01-09",
+        "2023-10-30",
+        3997
+      ],
+      "val": [
+        "2023-10-31",
+        "2024-03-20",
+        901
+      ],
+      "test": [
+        "2024-03-21",
+        "2024-08-09",
+        856
+      ]
+    },
+    "rule": "the same road on the next calendar day; 7 earlier observations required; chronological 70/15/15 by target date (project's own function)"
+  },
+  "methodology": {
+    "reference": "expanding_road_mean (mean of every observation of the road up to and including day t)",
+    "baselines": [
+      "global_train_mean",
+      "road_train_mean",
+      "expanding_road_mean",
+      "persistence",
+      "mean_last_7_obs",
+      "road_weekday_train_mean"
+    ],
+    "no_tuning": "no parameter is fitted or selected on any labels",
+    "rolling_origin": "expanding window by target date; first 50% of dates are training only; remaining dates split into contiguous blocks; at most 5 folds, fewer when fewer than 100 test samples per fold are available",
+    "diagnostics_period": "observations dated up to 2024-03-20 (end of the validation split); test labels are not used for the gate",
+    "bonferroni": "9 diagnostic tests; 5 baseline comparisons (+ saved models on the official split)",
+    "minimum_useful_effect": {
+      "autocorrelation": 0.05,
+      "calendar_adjusted_r2": 0.01
+    }
+  },
+  "official_test": {
+    "n_samples": 856,
+    "n_dates": 142,
+    "candidates": {
+      "global_train_mean": {
+        "MAE": 18.591089922194502,
+        "RMSE": 22.285349363473927,
+        "R2": -1.8450121736401925e-05,
+        "within_road_corr": NaN,
+        "rmse_minus_reference": {
+          "observed": 2.469160647673853,
+          "ci95": [
+            1.7360341303667925,
+            3.204229151890124
+          ],
+          "ci_bonferroni": [
+            1.470108408843359,
+            3.5089996709761535
+          ],
+          "excludes_zero_bonferroni": true
+        }
+      },
+      "road_train_mean": {
+        "MAE": 15.33798281045207,
+        "RMSE": 19.846221802036542,
+        "R2": 0.2069057512773571,
+        "within_road_corr": NaN,
+        "rmse_minus_reference": {
+          "observed": 0.030033086236468165,
+          "ci95": [
+            -0.05184710903652272,
+            0.11111267674985079
+          ],
+          "ci_bonferroni": [
+            -0.08830744484798231,
+            0.13506262980778883
+          ],
+          "excludes_zero_bonferroni": false
+        }
+      },
+      "expanding_road_mean": {
+        "MAE": 15.222156329071227,
+        "RMSE": 19.816188715800074,
+        "R2": 0.2093042980260449,
+        "within_road_corr": -0.1059668825705909
+      },
+      "persistence": {
+        "MAE": 19.104881256914645,
+        "RMSE": 28.2320791515356,
+        "R2": -0.6049253798925702,
+        "within_road_corr": -0.03613750653523895,
+        "rmse_minus_reference": {
+          "observed": 8.415890435735527,
+          "ci95": [
+            7.074214243095038,
+            9.753530849254917
+          ],
+          "ci_bonferroni": [
+            6.722590717606716,
+            10.182786362921057
+          ],
+          "excludes_zero_bonferroni": true
+        }
+      },
+      "mean_last_7_obs": {
+        "MAE": 15.65641718985188,
+        "RMSE": 20.95115352999786,
+        "R2": 0.11613691082394406,
+        "within_road_corr": -0.006511739356171535,
+        "rmse_minus_reference": {
+          "observed": 1.1349648141977866,
+          "ci95": [
+            0.6414596437085753,
+            1.592454702673825
+          ],
+          "ci_bonferroni": [
+            0.5002401762765115,
+            1.7904205080887001
+          ],
+          "excludes_zero_bonferroni": true
+        }
+      },
+      "road_weekday_train_mean": {
+        "MAE": 15.56588889314019,
+        "RMSE": 20.238079853433952,
+        "R2": 0.17527771594144514,
+        "within_road_corr": -0.028672821419165623,
+        "rmse_minus_reference": {
+          "observed": 0.4218911376338781,
+          "ci95": [
+            0.1946098325349431,
+            0.6962961240613729
+          ],
+          "ci_bonferroni": [
+            0.144811000951064,
+            0.7935935959840719
+          ],
+          "excludes_zero_bonferroni": true
+        }
+      },
+      "saved_LSTM": {
+        "MAE": 15.462974570810147,
+        "RMSE": 19.933043022650168,
+        "R2": 0.1999514779046384,
+        "within_road_corr": -0.007944133069931514,
+        "rmse_minus_reference": {
+          "observed": 0.11685430685009379,
+          "ci95": [
+            -0.016985638468293016,
+            0.24608404372959022
+          ],
+          "ci_bonferroni": [
+            -0.06391481971741661,
+            0.29677197336647565
+          ],
+          "excludes_zero_bonferroni": false
+        }
+      },
+      "saved_XGBoost": {
+        "MAE": 15.93097816266357,
+        "RMSE": 20.074052233915065,
+        "R2": 0.18859212420059246,
+        "within_road_corr": 0.02791865779369949,
+        "rmse_minus_reference": {
+          "observed": 0.2578635181149913,
+          "ci95": [
+            -0.06739110159026022,
+            0.5721917014383978
+          ],
+          "ci_bonferroni": [
+            -0.20896144858990384,
+            0.6758563425712009
+          ],
+          "excludes_zero_bonferroni": false
+        }
+      }
+    },
+    "split": "project's official test split (baselines fitted on the official train split only)",
+    "saved_models_included": [
+      "saved_LSTM",
+      "saved_XGBoost"
+    ]
+  },
+  "rolling_origin": {
+    "n_folds": 5,
+    "folds": [
+      {
+        "n_samples": 561,
+        "n_dates": 95,
+        "candidates": {
+          "global_train_mean": {
+            "MAE": 19.05308530098452,
+            "RMSE": 22.984773463996344,
+            "R2": -0.000921221992177923,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 2.5170288367243145,
+              "ci95": [
+                1.577724521916926,
+                3.423310328008992
+              ],
+              "ci_bonferroni": [
+                1.319626848772966,
+                3.6968971509178257
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_train_mean": {
+            "MAE": 15.64939483575989,
+            "RMSE": 20.38115246410048,
+            "R2": 0.21299604007405992,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": -0.08659216317154872,
+              "ci95": [
+                -0.17629324427715848,
+                0.012316592128456585
+              ],
+              "ci_bonferroni": [
+                -0.21042234676183263,
+                0.05082995378973069
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          },
+          "expanding_road_mean": {
+            "MAE": 15.628587150714116,
+            "RMSE": 20.46774462727203,
+            "R2": 0.206294442177275,
+            "within_road_corr": -0.2302497367602264
+          },
+          "persistence": {
+            "MAE": 18.691103012156553,
+            "RMSE": 27.93421809886004,
+            "R2": -0.47840179514107883,
+            "within_road_corr": 0.022262662123291716,
+            "rmse_minus_reference": {
+              "observed": 7.46647347158801,
+              "ci95": [
+                5.89947009334058,
+                9.006378642667466
+              ],
+              "ci_bonferroni": [
+                5.369911456619505,
+                9.423880284310211
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "mean_last_7_obs": {
+            "MAE": 16.36739778361789,
+            "RMSE": 22.248609270076372,
+            "R2": 0.06216771346647043,
+            "within_road_corr": -0.12411211033661157,
+            "rmse_minus_reference": {
+              "observed": 1.7808646428043424,
+              "ci95": [
+                1.154681217101187,
+                2.42866009830386
+              ],
+              "ci_bonferroni": [
+                0.9361437259456119,
+                2.611646568968304
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_weekday_train_mean": {
+            "MAE": 16.00628881470935,
+            "RMSE": 21.013108229387978,
+            "R2": 0.16343433344218639,
+            "within_road_corr": -0.07150746801162752,
+            "rmse_minus_reference": {
+              "observed": 0.5453636021159483,
+              "ci95": [
+                0.16796054838047345,
+                0.9404239703795666
+              ],
+              "ci_bonferroni": [
+                0.07553951482733907,
+                1.0452265591661627
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          }
+        },
+        "fold": 1,
+        "train_samples": 2830,
+        "train_target_dates_before": "2023-04-26",
+        "test_target_dates": [
+          "2023-04-26",
+          "2023-07-29"
+        ]
+      },
+      {
+        "n_samples": 614,
+        "n_dates": 95,
+        "candidates": {
+          "global_train_mean": {
+            "MAE": 17.997457655465325,
+            "RMSE": 21.828970341893022,
+            "R2": -0.001030152371080728,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 2.269032298601463,
+              "ci95": [
+                1.455334098203424,
+                3.0677276769028
+              ],
+              "ci_bonferroni": [
+                1.1721904676116424,
+                3.37901514568783
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_train_mean": {
+            "MAE": 15.322722905047154,
+            "RMSE": 19.694282483114048,
+            "R2": 0.18518130765511986,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 0.13434443982248823,
+              "ci95": [
+                0.02411786434837664,
+                0.24050772908103063
+              ],
+              "ci_bonferroni": [
+                -0.01149687670587496,
+                0.268627571135581
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          },
+          "expanding_road_mean": {
+            "MAE": 15.129361975198467,
+            "RMSE": 19.55993804329156,
+            "R2": 0.19625995434194354,
+            "within_road_corr": -0.18639030957670052
+          },
+          "persistence": {
+            "MAE": 18.988382656378295,
+            "RMSE": 28.08798823509069,
+            "R2": -0.657379362249259,
+            "within_road_corr": -0.006621980352184019,
+            "rmse_minus_reference": {
+              "observed": 8.528050191799132,
+              "ci95": [
+                7.072220116415673,
+                10.016392035779848
+              ],
+              "ci_bonferroni": [
+                6.478396808769063,
+                10.493545395376561
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "mean_last_7_obs": {
+            "MAE": 15.939929534411021,
+            "RMSE": 21.05265183136819,
+            "R2": 0.06890440091949823,
+            "within_road_corr": -0.08132595475527776,
+            "rmse_minus_reference": {
+              "observed": 1.4927137880766317,
+              "ci95": [
+                0.9791859971059975,
+                2.030420604192374
+              ],
+              "ci_bonferroni": [
+                0.8344681477782975,
+                2.167891610417712
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_weekday_train_mean": {
+            "MAE": 15.631453151250712,
+            "RMSE": 20.087948141869983,
+            "R2": 0.1522811999803787,
+            "within_road_corr": -0.036365669028975735,
+            "rmse_minus_reference": {
+              "observed": 0.5280100985784237,
+              "ci95": [
+                0.24076945284586068,
+                0.7965584605729444
+              ],
+              "ci_bonferroni": [
+                0.1516024767746076,
+                0.8692092445163206
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          }
+        },
+        "fold": 2,
+        "train_samples": 3391,
+        "train_target_dates_before": "2023-07-30",
+        "test_target_dates": [
+          "2023-07-30",
+          "2023-11-01"
+        ]
+      },
+      {
+        "n_samples": 603,
+        "n_dates": 94,
+        "candidates": {
+          "global_train_mean": {
+            "MAE": 17.87713528001857,
+            "RMSE": 21.633115251051922,
+            "R2": -0.0011952412464135698,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 1.6172469229554771,
+              "ci95": [
+                0.8799218883433509,
+                2.3397268257539237
+              ],
+              "ci_bonferroni": [
+                0.6438649140155475,
+                2.6093973871668434
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_train_mean": {
+            "MAE": 15.274543370193252,
+            "RMSE": 20.004836281772118,
+            "R2": 0.14384844130057972,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": -0.011032046324327638,
+              "ci95": [
+                -0.09627333183181444,
+                0.07958709482131061
+              ],
+              "ci_bonferroni": [
+                -0.11641873145330271,
+                0.10689237800829304
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          },
+          "expanding_road_mean": {
+            "MAE": 15.212751489095538,
+            "RMSE": 20.015868328096445,
+            "R2": 0.14290389890454058,
+            "within_road_corr": -0.12940042907495292
+          },
+          "persistence": {
+            "MAE": 18.578510640557745,
+            "RMSE": 27.328988146926598,
+            "R2": -0.5978196332568704,
+            "within_road_corr": 0.03283456178589902,
+            "rmse_minus_reference": {
+              "observed": 7.3131198188301525,
+              "ci95": [
+                5.9076057806434115,
+                8.685395391517652
+              ],
+              "ci_bonferroni": [
+                5.3967172227808184,
+                9.097368308792943
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "mean_last_7_obs": {
+            "MAE": 15.686291654782567,
+            "RMSE": 21.020186135926973,
+            "R2": 0.05473459549768811,
+            "within_road_corr": -0.004479621873811763,
+            "rmse_minus_reference": {
+              "observed": 1.0043178078305282,
+              "ci95": [
+                0.37946504474574566,
+                1.580347966058462
+              ],
+              "ci_bonferroni": [
+                0.1706503602648172,
+                1.8254383459837351
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_weekday_train_mean": {
+            "MAE": 15.346926658424083,
+            "RMSE": 20.10341528760808,
+            "R2": 0.13538983497139478,
+            "within_road_corr": 0.05447940620456764,
+            "rmse_minus_reference": {
+              "observed": 0.08754695951163427,
+              "ci95": [
+                -0.24456767653010852,
+                0.4422399184871277
+              ],
+              "ci_bonferroni": [
+                -0.3284536231169192,
+                0.5587619133311784
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          }
+        },
+        "fold": 3,
+        "train_samples": 4005,
+        "train_target_dates_before": "2023-11-02",
+        "test_target_dates": [
+          "2023-11-02",
+          "2024-02-03"
+        ]
+      },
+      {
+        "n_samples": 572,
+        "n_dates": 94,
+        "candidates": {
+          "global_train_mean": {
+            "MAE": 18.12431021771382,
+            "RMSE": 21.724527415564463,
+            "R2": -0.0008169578104229025,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 3.018761843777508,
+              "ci95": [
+                1.9698275936640381,
+                4.069218204987398
+              ],
+              "ci_bonferroni": [
+                1.6820087787214033,
+                4.387261775772407
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_train_mean": {
+            "MAE": 14.563517638351163,
+            "RMSE": 18.750061789026397,
+            "R2": 0.25447984966176196,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 0.04429621723944166,
+              "ci95": [
+                -0.03745282608443725,
+                0.13243283213358717
+              ],
+              "ci_bonferroni": [
+                -0.07077346999413951,
+                0.1553631833579272
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          },
+          "expanding_road_mean": {
+            "MAE": 14.488909585629404,
+            "RMSE": 18.705765571786955,
+            "R2": 0.25799820755758707,
+            "within_road_corr": -0.19055838481692103
+          },
+          "persistence": {
+            "MAE": 18.110541972559147,
+            "RMSE": 26.90874676897766,
+            "R2": -0.5354685417767655,
+            "within_road_corr": -0.05290153512502862,
+            "rmse_minus_reference": {
+              "observed": 8.202981197190706,
+              "ci95": [
+                6.762421781965052,
+                9.63160453928193
+              ],
+              "ci_bonferroni": [
+                6.334759178394113,
+                10.089974624632015
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "mean_last_7_obs": {
+            "MAE": 14.653247445929336,
+            "RMSE": 19.90787099778729,
+            "R2": 0.15956599620308365,
+            "within_road_corr": -0.04344119870707696,
+            "rmse_minus_reference": {
+              "observed": 1.2021054260003332,
+              "ci95": [
+                0.6582865266400425,
+                1.7682797060035638
+              ],
+              "ci_bonferroni": [
+                0.45121422249285986,
+                1.9318043041179918
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_weekday_train_mean": {
+            "MAE": 14.651188809845772,
+            "RMSE": 19.01349047529487,
+            "R2": 0.23338434663332697,
+            "within_road_corr": 0.0008934643229841471,
+            "rmse_minus_reference": {
+              "observed": 0.30772490350791415,
+              "ci95": [
+                0.007075621625098543,
+                0.6123810132654223
+              ],
+              "ci_bonferroni": [
+                -0.07222557938611353,
+                0.685135523420512
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          }
+        },
+        "fold": 4,
+        "train_samples": 4608,
+        "train_target_dates_before": "2024-02-04",
+        "test_target_dates": [
+          "2024-02-04",
+          "2024-05-07"
+        ]
+      },
+      {
+        "n_samples": 574,
+        "n_dates": 94,
+        "candidates": {
+          "global_train_mean": {
+            "MAE": 18.518583214900623,
+            "RMSE": 22.193633043096053,
+            "R2": -0.00016969240568820432,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 1.8212899423117541,
+              "ci95": [
+                1.0341340800849974,
+                2.6022429599146113
+              ],
+              "ci_bonferroni": [
+                0.7531658976465165,
+                2.8457356988701683
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_train_mean": {
+            "MAE": 15.753128394394027,
+            "RMSE": 20.401882461568135,
+            "R2": 0.15480412141697497,
+            "within_road_corr": NaN,
+            "rmse_minus_reference": {
+              "observed": 0.029539360783836344,
+              "ci95": [
+                -0.05195959054526735,
+                0.10984046997177517
+              ],
+              "ci_bonferroni": [
+                -0.07254126263851225,
+                0.13536689311430805
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          },
+          "expanding_road_mean": {
+            "MAE": 15.70296222202357,
+            "RMSE": 20.3723431007843,
+            "R2": 0.15724982433949997,
+            "within_road_corr": -0.10679679600754559
+          },
+          "persistence": {
+            "MAE": 19.642093636478055,
+            "RMSE": 28.81833280034489,
+            "R2": -0.6863766996222669,
+            "within_road_corr": -0.010459881392109275,
+            "rmse_minus_reference": {
+              "observed": 8.445989699560592,
+              "ci95": [
+                6.814478606039858,
+                10.060539606581271
+              ],
+              "ci_bonferroni": [
+                6.373277441190694,
+                10.649812094103295
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "mean_last_7_obs": {
+            "MAE": 16.269910681001402,
+            "RMSE": 21.59862701594052,
+            "R2": 0.052740045758279064,
+            "within_road_corr": -0.01363781015821954,
+            "rmse_minus_reference": {
+              "observed": 1.2262839151562197,
+              "ci95": [
+                0.6271899874191914,
+                1.8326502356248346
+              ],
+              "ci_bonferroni": [
+                0.4432400529865357,
+                2.0340237666409102
+              ],
+              "excludes_zero_bonferroni": true
+            }
+          },
+          "road_weekday_train_mean": {
+            "MAE": 15.967594079619925,
+            "RMSE": 20.69779872131587,
+            "R2": 0.13010826051804425,
+            "within_road_corr": -0.037313811466202586,
+            "rmse_minus_reference": {
+              "observed": 0.32545562053157084,
+              "ci95": [
+                0.05586393775586842,
+                0.5866348888852485
+              ],
+              "ci_bonferroni": [
+                -0.012488140455764057,
+                0.7031527415597176
+              ],
+              "excludes_zero_bonferroni": false
+            }
+          }
+        },
+        "fold": 5,
+        "train_samples": 5180,
+        "train_target_dates_before": "2024-05-08",
+        "test_target_dates": [
+          "2024-05-08",
+          "2024-08-09"
+        ]
+      }
+    ],
+    "pooled": {
+      "n_samples": 2924,
+      "n_dates": 472,
+      "candidates": {
+        "global_train_mean": {
+          "MAE": 18.30229296786747,
+          "RMSE": 22.066889570552082,
+          "R2": -0.0001811615480309392,
+          "within_road_corr": -0.0009343966886674011,
+          "rmse_minus_reference": {
+            "observed": 2.23614695443716,
+            "ci95": [
+              1.8541867870915556,
+              2.610666472538407
+            ],
+            "ci_bonferroni": [
+              1.7502360660811347,
+              2.706064373126074
+            ],
+            "excludes_zero_bonferroni": true
+          }
+        },
+        "road_train_mean": {
+          "MAE": 15.31143632226601,
+          "RMSE": 19.853388708680992,
+          "R2": 0.19040891275360827,
+          "within_road_corr": -0.06441807265060191,
+          "rmse_minus_reference": {
+            "observed": 0.02264609256607031,
+            "ci95": [
+              -0.01921011467342959,
+              0.06465804472600636
+            ],
+            "ci_bonferroni": [
+              -0.03735304754170151,
+              0.07440470694617814
+            ],
+            "excludes_zero_bonferroni": false
+          }
+        },
+        "expanding_road_mean": {
+          "MAE": 15.229655058368207,
+          "RMSE": 19.83074261611492,
+          "R2": 0.1922548060104442,
+          "within_road_corr": -0.06518812910173045
+        },
+        "persistence": {
+          "MAE": 18.803423191769717,
+          "RMSE": 27.822292197501636,
+          "R2": -0.5899455142353631,
+          "within_road_corr": 0.011633862880747787,
+          "rmse_minus_reference": {
+            "observed": 7.991549581386714,
+            "ci95": [
+              7.319367921600775,
+              8.706981855583903
+            ],
+            "ci_bonferroni": [
+              7.126760932618182,
+              8.928415960288525
+            ],
+            "excludes_zero_bonferroni": true
+          }
+        },
+        "mean_last_7_obs": {
+          "MAE": 15.782711022071913,
+          "RMSE": 21.172308293972435,
+          "R2": 0.07926883083816705,
+          "within_road_corr": -0.017791905662580168,
+          "rmse_minus_reference": {
+            "observed": 1.3415656778575134,
+            "ci95": [
+              1.0735278930582408,
+              1.6057130474056045
+            ],
+            "ci_bonferroni": [
+              1.0065364080061445,
+              1.6907598908549475
+            ],
+            "excludes_zero_bonferroni": true
+          }
+        },
+        "road_weekday_train_mean": {
+          "MAE": 15.5189179329286,
+          "RMSE": 20.189439845713892,
+          "R2": 0.1627696443159682,
+          "within_road_corr": -0.026433935503091737,
+          "rmse_minus_reference": {
+            "observed": 0.3586972295989703,
+            "ci95": [
+              0.20865814419451345,
+              0.50213992286988
+            ],
+            "ci_bonferroni": [
+              0.1621949751844196,
+              0.5414376874517521
+            ],
+            "excludes_zero_bonferroni": true
+          }
+        }
+      },
+      "description": "all rolling-origin test rows pooled (each row scored by baselines that used only data available at its fold origin)"
+    }
+  },
+  "diagnostics_development_period": {
+    "n_observations": 7616,
+    "autocorrelation": [
+      {
+        "lag_days": 1,
+        "n_pairs": 4959,
+        "r": 0.006807238102289123,
+        "ci95": [
+          -0.019528699985004123,
+          0.03587022507119026
+        ],
+        "ci_bonferroni": [
+          -0.02967705532479727,
+          0.04685113911439921
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 2,
+        "n_pairs": 4932,
+        "r": -0.016166864565010278,
+        "ci95": [
+          -0.041422716950967664,
+          0.009333433783234816
+        ],
+        "ci_bonferroni": [
+          -0.05379376329060663,
+          0.019363293520279868
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 3,
+        "n_pairs": 4902,
+        "r": -0.021744439958076574,
+        "ci95": [
+          -0.04938096511467042,
+          0.005049918289319566
+        ],
+        "ci_bonferroni": [
+          -0.05780638686297138,
+          0.018462427809794357
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 7,
+        "n_pairs": 4896,
+        "r": -0.03701022156030316,
+        "ci95": [
+          -0.061923535249910955,
+          -0.011393090579526487
+        ],
+        "ci_bonferroni": [
+          -0.07093734026399767,
+          -3.539820762420951e-05
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 14,
+        "n_pairs": 4875,
+        "r": -0.0014255728571644526,
+        "ci95": [
+          -0.027322805578530774,
+          0.026134205588396305
+        ],
+        "ci_bonferroni": [
+          -0.038115525856786375,
+          0.03676833476936071
+        ],
+        "useful": false
+      }
+    ],
+    "calendar_effects": [
+      {
+        "effect": "weekday",
+        "n_groups": 7,
+        "n_rows": 7616,
+        "r2": 0.000206205614385983,
+        "adjusted_r2": -0.0005821716712379743,
+        "permutation_p": 0.945054945054945,
+        "useful": false
+      },
+      {
+        "effect": "month_of_year",
+        "n_groups": 12,
+        "n_rows": 7616,
+        "r2": 0.0016812495523941867,
+        "adjusted_r2": 0.0002370746109261468,
+        "permutation_p": 0.3146853146853147,
+        "useful": false
+      },
+      {
+        "effect": "calendar_date",
+        "n_groups": 810,
+        "n_rows": 7616,
+        "r2": 0.0975975548666172,
+        "adjusted_r2": -0.009667149528461705,
+        "permutation_p": 0.973026973026973,
+        "useful": false
+      },
+      {
+        "effect": "road_month",
+        "n_groups": 432,
+        "n_rows": 7616,
+        "r2": 0.048327469072174556,
+        "adjusted_r2": -0.008767583938668055,
+        "permutation_p": 0.987012987012987,
+        "useful": false
+      }
+    ]
+  },
+  "diagnostics_all_data_descriptive": {
+    "n_observations": 8936,
+    "autocorrelation": [
+      {
+        "lag_days": 1,
+        "n_pairs": 5815,
+        "r": 0.003148051773365431,
+        "ci95": [
+          -0.021348860781752344,
+          0.028387362034079114
+        ],
+        "ci_bonferroni": [
+          -0.031632697588903344,
+          0.03808147057128444
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 2,
+        "n_pairs": 5785,
+        "r": -0.01758325282820554,
+        "ci95": [
+          -0.042702895706280185,
+          0.008779652949016743
+        ],
+        "ci_bonferroni": [
+          -0.05107410426297201,
+          0.019849475600091187
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 3,
+        "n_pairs": 5750,
+        "r": -0.021114999877715753,
+        "ci95": [
+          -0.04635851906166624,
+          0.00352825485591319
+        ],
+        "ci_bonferroni": [
+          -0.05594148575879162,
+          0.012328884454276014
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 7,
+        "n_pairs": 5743,
+        "r": -0.032637910395701984,
+        "ci95": [
+          -0.056578192464203765,
+          -0.007152558653994296
+        ],
+        "ci_bonferroni": [
+          -0.0665209678631738,
+          0.0019815691203013625
+        ],
+        "useful": false
+      },
+      {
+        "lag_days": 14,
+        "n_pairs": 5720,
+        "r": -0.006325137386048702,
+        "ci95": [
+          -0.02998739561982183,
+          0.018412508453952644
+        ],
+        "ci_bonferroni": [
+          -0.03794475543629588,
+          0.026971384134608284
+        ],
+        "useful": false
+      }
+    ],
+    "calendar_effects": [
+      {
+        "effect": "weekday",
+        "n_groups": 7,
+        "n_rows": 8936,
+        "r2": 0.00034552300822120695,
+        "adjusted_r2": -0.0003262125570100416,
+        "permutation_p": 0.7992007992007992,
+        "useful": false
+      },
+      {
+        "effect": "month_of_year",
+        "n_groups": 12,
+        "n_rows": 8936,
+        "r2": 0.001054823048427486,
+        "adjusted_r2": -0.00017650785099720956,
+        "permutation_p": 0.6043956043956044,
+        "useful": false
+      },
+      {
+        "effect": "calendar_date",
+        "n_groups": 952,
+        "n_rows": 8936,
+        "r2": 0.10113786447772788,
+        "adjusted_r2": -0.005928504620679176,
+        "permutation_p": 0.8651348651348651,
+        "useful": false
+      },
+      {
+        "effect": "road_month",
+        "n_groups": 512,
+        "n_rows": 8936,
+        "r2": 0.04909006526655745,
+        "adjusted_r2": -0.00859214943534048,
+        "permutation_p": 0.993006993006993,
+        "useful": false
+      }
+    ]
+  },
+  "gate": {
+    "verdict": "NO_USABLE_SIGNAL",
+    "evidence_of_signal": [],
+    "meaning": "No evidence of within-road, time-dependent signal beyond each road's usual level was found on this data. Training a new learned model on it is not justified; any learned model should be expected to match, not beat, the per-road mean."
+  },
+  "limitations": [
+    "Results describe THIS dataset only. Its provenance and measurement process are unverified, so nothing here is a statement about real-world traffic.",
+    "About 43% of target values are exactly 100 (a cap); RMSE and MAE rank methods differently because of it.",
+    "Each calendar day has only a few roads observed (about 9 of 16), and 35% of road days are missing; samples need the next day to be observed.",
+    "The rolling-origin evaluation uses simple fixed baselines, not learned models: it tests whether signal exists, not how well a model could use it.",
+    "Tests have limited power: effects smaller than the thresholds above cannot be excluded.",
+    "Saved LSTM/XGBoost predictions are only read, and only the official test split is available for them."
+  ]
+}
