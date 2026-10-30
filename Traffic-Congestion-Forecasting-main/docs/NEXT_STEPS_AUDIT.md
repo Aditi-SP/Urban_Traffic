@@ -114,3 +114,19 @@ within-road lag-1 r = 0.003 [-0.021, 0.028]. Artifact hashes equal the evaluatio
 
 ## 8. Not verified here
 A 403 answer from TomTom; your key's quota and plan; TomTom's terms; coverage of roads other than the two points tried; whether any real newer data source exists; a second real traffic request through Mode 2 on the Forecasts page (covered by mocked tests only).
+
+## 9. Final hardening (branch `final-hardening`, 2026-10-30)
+
+Status of the limitations that remained after the release `251f86f4`. Only what was measured or read is claimed.
+
+| Area | Status | What was done / why it remains open |
+|---|---|---|
+| D12 / TomTom 401, 403, 400, 404 handling | **Fixed where observable, documented where not** | Real responses were recorded: no-road is HTTP 400 "Point too far from nearest existing segment."; a wrong or missing key is HTTP 401; other 400s and an unknown service version (404) are not "no segment" (they were wrongly mapped before). A 403 quotes TomTom's documented meaning; its causes stay hedged because a real 403 body has never been seen. New kind `unexpected_status` for anything not understood. Tests mark each body as recorded, constructed or unverified. |
+| D13 / TomTom terms, quota, attribution | **Partly resolved, blocker documented** | Official documentation read and cited with the date (status codes, error format, Cache-Control, the pricing page's "Free 20K monthly" for this API, no per-second limit stated). The **binding developer terms could not be read** with the tools available, so caching, storage, ML-use and attribution rules remain unresolved. Nothing is stored; `LIVE_CACHE_TTL_S=0` and the safeguards stay. Needs a human to read TomTom's terms or ask TomTom. |
+| Live traffic coverage | **Audited, no coverage claim** | 16 of 16 main-road points and 4 of 4 scope-edge points returned a valid segment. TomTom answers for the nearest road, so the page now says when that road is more than 150 m from the chosen point. Nothing stored. A 20-point probe is not city-wide coverage. |
+| Model performance | **Audited, no defect found, nothing retrained** | `tests/test_evaluation_audit.py` re-verifies identical test rows, recomputed metrics, baselines, chronological split, train-only scaler. Result unchanged: the road mean is at least as good as both learned models; no model is claimed to win. Extra data needed is documented (real, newer, finer than daily, usable licence). |
+| Historical data | **Blocker documented** | Sources searched; none legitimate and usable was found (see README). The data-coverage warnings and the read-only validator already existed and are unchanged. Needs real newer observations you may legally use. |
+| Fresh installation | **Improved and tested** | README: Python 3.11 checklist, dataset placement, behaviour without the dataset, the git-ignored `doucments/` folder is no longer assumed, actionable failure table. The suite is now hermetic against a developer's saved TomTom key (a test failed on its own when a key was saved). |
+| Loading state | **Implemented and tested** | Specific spinners for the search, traffic request, prediction, model loading, dataset loading and the two Diagnostics checks; the sidebar says its status is from the previous action while a run is busy and the line is always cleared. Streamlit shows a spinner only after about 0.5 s, so a fast operation shows none. |
+| D8 failure-matrix timeouts | **Unchanged** | Passed 27/27 (about 14 minutes); its fixed per-step limits were not changed. |
+| D10 uncommitted work | **Resolved** | Committed and pushed in `251f86f4` and earlier. |

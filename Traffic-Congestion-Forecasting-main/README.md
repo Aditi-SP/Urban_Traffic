@@ -139,18 +139,47 @@ It only reads files (never writes, trains or regenerates anything) and separates
 
 ## Setup from scratch (only if `..\.venv` does not exist)
 
-Python 3.11 on Windows is what the project was developed and tested with.
+This is the checklist for a **clean Windows machine** (Windows 10 or 11, PowerShell). The project was developed and tested with **Python 3.11** (3.11.9); other versions are not supported
+(TensorFlow 2.16 and the pinned NumPy need it). The first install downloads about 1 GB (TensorFlow) and takes several minutes.
 
 ```powershell
-cd "<the folder that CONTAINS the project folder>"     # the virtual environment is created next to the project folder, as `.venv`
+# 0. Python 3.11:  py -3.11 --version     (if that fails, install Python 3.11 from https://www.python.org/downloads/windows/ and tick "Add python.exe to PATH")
+git clone https://github.com/Aditi-SP/Urban_Traffic.git
+cd Urban_Traffic                       # the folder that CONTAINS the project folder: the virtual environment is created here, next to it
 py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r Traffic-Congestion-Forecasting-main\requirements.txt
 # optional, only to re-run the PySpark script (also needs Java 17+):
 .\.venv\Scripts\python.exe -m pip install -r Traffic-Congestion-Forecasting-main\requirements-bigdata.txt
 ```
 
-You also need the dataset `data/raw/Banglore_traffic_Dataset.csv` (git-ignored; see "Dataset" above) and the validated
-model files in `model/`. Neither is created by the launchers or the preflight.
+**Put the dataset in place.** The dataset is **not in the repository** (`*.csv` is git-ignored; see "Dataset"). Download `Banglore_traffic_Dataset.csv` (Kaggle:
+`preethamgouda/banglore-city-traffic-dataset`) and save it as `Traffic-Congestion-Forecasting-main\data\raw\Banglore_traffic_Dataset.csv` (create the folders if they do not exist).
+The trained model files in `model/` **are** in the repository.
+
+```powershell
+cd Traffic-Congestion-Forecasting-main
+.\run_dashboard.ps1 -CheckOnly        # the summary must say "Dashboard can launch ... YES"; anything else names what to fix
+.\run_dashboard.ps1                   # starts the dashboard and opens it in your browser
+```
+
+**What happens without the dataset:** the dashboard still starts. A red "Setup incomplete" box names the missing file, the forecasts and replays are disabled with the reason, and
+`.\run_dashboard.ps1 -CheckOnly` reports "Live prediction demo available ... NO". Nothing is invented to fill the gap. Without the models or with a different dataset the same happens,
+each with its own message (this is tested by `tests/failure_matrix.py`).
+
+**About the `doucments/` folder.** The research paper, slides and their backups are kept **locally only** and are **not part of the repository**, so a fresh clone does not have `doucments/`.
+Nothing in the dashboard needs it. `docs_tests/` checks those documents against the evaluation outputs and **skips cleanly (all tests skipped)** when they are absent: that is expected in a clone.
+
+**If something goes wrong**
+
+| What you see | Fix |
+|---|---|
+| `py -3.11` is not recognised | install Python 3.11 (link above) and open a **new** PowerShell window |
+| `pip install` fails on TensorFlow or NumPy | you are not using Python 3.11: delete `.venv`, create it again with `py -3.11 -m venv .venv` |
+| Launcher: "the project virtual environment was not found" | the `.venv` must be in the project folder or directly above it; repeat the setup above |
+| `running scripts is disabled on this system` | run `run_dashboard.bat` instead, or `powershell -ExecutionPolicy Bypass -File .\run_dashboard.ps1` |
+| Red "Setup incomplete" box, "Dataset ... not found" | save the CSV exactly at `data\raw\Banglore_traffic_Dataset.csv` (see above) |
+| The first start is slow | TensorFlow takes about 10 seconds to import; the first model load takes 10 to 20 seconds (the page says so) |
 
 ## Other commands
 
@@ -348,18 +377,20 @@ does not have it". If step 3 fails, its `RESULT:` line says which of these it is
 | `RESULT` / message | Meaning | What to do |
 |---|---|---|
 | `NOT CONFIGURED` | no usable key in this terminal | follow the lines above it |
-| `KEY NOT ACCEPTED` / "the key was not accepted (it is invalid or has expired)" | invalid or expired credentials | copy the key again (completely, no spaces); create a new one if needed |
+| `KEY NOT ACCEPTED` after **HTTP 401** | **observed** with a wrong or missing key: TomTom says "You are missing valid authentication credentials" | copy the key again (completely, no spaces); create a new one if needed |
 | `KEY MAY NOT BE ENABLED FOR THE TRAFFIC FLOW API` | HTTP 403 whose answer suggests the Traffic API is not enabled for the key (**the wording of a real 403 is unverified; this is a guess from the answer's text**) | in your TomTom developer account check that the Traffic API is enabled for that key |
 | `QUOTA MAY BE USED UP` | HTTP 403 whose answer suggests the quota is exhausted (**same caveat: unverified wording**) | check usage and plan in your TomTom account |
 | `KEY NOT ACCEPTED` after a 403 that says nothing useful | the neutral message: "the key may be invalid, expired, not enabled for the Traffic API, or over its quota. TomTom's answer did not say which" | check the key in your TomTom developer account |
 | `RATE LIMITED` | HTTP 429 | wait; the dashboard pauses requests for 60 s |
 | `TIMEOUT` / `NO CONNECTION` | network problem | check your internet connection and retry |
 | `TOMTOM PROBLEM` | TomTom reported a temporary problem (HTTP 5xx) | retry later |
-| `NO TRAFFIC DATA NEAR THE POINT` | no data for the point | coverage of a given road is only known from a real response |
+| `NO TRAFFIC DATA NEAR THE POINT` | **observed**: HTTP 400 with "Point too far from nearest existing segment." (no road near the point) | choose a point on or near a main road |
+| `UNEXPECTED ANSWER` | TomTom answered with a status this application does not understand (for example HTTP 404 for an unknown service version, or any other 400); nothing is shown | report it; nothing is guessed |
 | `UNREADABLE ANSWER` | the response was not in the expected format | report it; nothing is guessed or filled in |
 
-An "HTTP 403" whose answer does not say why is shown as "the key may be invalid, expired, not enabled for the Traffic API, or over its quota";
-TomTom's error wording is not guaranteed, so only clear cases are told apart.
+Only what TomTom was **observed** to say is stated as fact (the 401 and the "no road" 400 above) or **documented** to mean (HTTP 403: "The supplied API Key is not valid for this
+request.", HTTP 429: too many requests). How a real 403 body is worded has never been seen, so a cause taken from it (quota, not enabled) is shown only as what the answer
+*suggests*, and an answer that says nothing useful gets the neutral message listing the possible reasons. The response body is only used to choose a message; it is never shown or logged.
 
 ### Restart the dashboard (a running dashboard never sees a key set after it started)
 
@@ -394,29 +425,49 @@ Until step 4 has happened, live traffic is **unverified**. Readings stay in memo
 
 ### Verification status of the TomTom integration
 
-**What has been verified, and what has not (updated 2026-10-30).**
+Checked on **2026-10-30** with a real key, through the project's own client and against TomTom's official documentation.
 
-* **Verified against the real service:** with a valid key, single-point Flow Segment Data requests made through the running dashboard (after a real Nominatim search for a Bengaluru place) returned valid readings, which the page drew as a traffic segment with current speed, free-flow speed and the TomTom attribution. A deliberately invalid key was rejected with HTTP 401. These are a handful of requests for a few points: they show that the integration works, and say nothing about coverage of other roads.
-* **Still unverified:** how TomTom words an HTTP **403** (no access to the Traffic API, quota, or something else). The error classifier (`src/live/tomtom.py`, `_denied`) therefore treats a 403 neutrally: it names the possible causes and says TomTom did not say which. Its word lists for "quota" and "no permission" are heuristics that have never been matched against a real 403 body; when neither list matches, the neutral message is used. The response body is only used to choose a message and is never shown or logged.
-* **Unverified:** quotas and the terms of use (next section). Nothing is stored, and the cache stays at `LIVE_CACHE_TTL_S=0`.
+* **Verified against the real service.** Single-point Flow Segment Data requests returned a valid segment for **16 of 16 main-road points** spread over Bengaluru
+  (Silk Board, MG Road, Majestic, Hebbal, KR Puram, Electronic City, Yeshwanthpur, Marathahalli, Whitefield, Banashankari, Jayanagar, Peenya, Bellandur,
+  Kengeri, Hosur Road, Outer Ring Road) and for **4 of 4 points at the edges of the map scope**; no error occurred. The response has **no measurement
+  timestamp** and its `Cache-Control` is `public, max-age=0`.
+* **Recorded real error responses** (the shapes the tests use, labelled as recorded): a point with no road near it (tested with points in the sea, outside the map
+  scope) gives HTTP 400 `{"error": "Point too far from nearest existing segment.", "httpStatusCode": 400, "detailedError": {"code": "INVALID_REQUEST", ...}}`; a wrong
+  or missing key gives HTTP 401 `{"detailedError": {"code": "Unauthorized", "message": "You are missing valid authentication credentials"}}`; a malformed or missing
+  point gives other HTTP 400s ("Invalid point format.", "Missing point parameter."); an unknown service version gives HTTP 404 in a different JSON shape.
+* **Documented but never observed here:** HTTP 403 ("The supplied API Key is not valid for this request."), HTTP 429 ("Too many requests were sent in a given amount of
+  time for the supplied API Key."), 500, 503 and 596 ("Unknown version of the service."). **Unknown:** how a real 403 body is worded, and whether an exhausted
+  quota answers 403 or 429. The classifier (`src/live/tomtom.py`) therefore never presents a guessed 403 cause as fact: see "Check the setup" above.
+* **Not verified:** the binding developer terms, the quota of *your* account, and coverage beyond the points listed.
 
-### TomTom terms: what has and has not been verified
+**Coverage, honestly.** TomTom answers for the **nearest road segment** to the point, so a valid reading describes that road, which the page draws on the map. When
+that road is more than 150 m from the point you chose, the page says so ("TomTom answered for the nearest road, about N m from the point you chose"). The 20 points
+above are a probe, not a survey: **no claim of city-wide or lane-level coverage is made**, and a place with no road near it is reported as "no traffic data near the
+point". The probe stored nothing (only the outcome per point was looked at); readings are never stored.
 
-Checked on 2026-10-29 in TomTom's public documentation:
-[Flow Segment Data](https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/traffic-flow/flow-segment-data)
-(request and response format, status codes 400/403/429/500/503; the response carries **no timestamp**, and its
-`Cache-Control` header is `public, max-age=0`) and the [pricing page](https://docs.tomtom.com/pricing).
+### TomTom terms, quota and attribution: what has and has not been verified
 
-**Not verified:** the TomTom developer terms that govern caching, storage, display and attribution of traffic data could
-not be read (the page links to them but they were not available to the tool used), TomTom's general
-[Terms of Use](https://www.tomtom.com/en_us/legal/terms-of-use/) are website terms and say nothing about API data, and no
-official page confirming coverage of Bengaluru for this endpoint was found. Consequences:
+Official sources read on **2026-10-30**:
 
-* Readings are **not stored** and **not used to build datasets or train or evaluate models**. Do not change this until
-  the terms are read and explicitly allow it.
-* Whether reusing a reading for up to 5 minutes is allowed is **unconfirmed**; the response's `max-age=0` header suggests
-  clients should not rely on cached copies. The strictest behaviour is `LIVE_CACHE_TTL_S=0` (see above).
-* Whether this endpoint returns data for a given Bengaluru road is only known by trying it with a valid key.
+* Flow Segment Data reference (page last edited 2025-04-17): <https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/traffic-flow/flow-segment-data>. Request format,
+  status codes (200, 400, 403, 405, 429, 500, 503, 596), JSON error body (`error`, `httpStatusCode`, `detailedError.code` / `.message`), `Cache-Control: public, max-age=0`.
+* Pricing page: <https://docs.tomtom.com/pricing>. It lists **"Traffic Flow API (Segment Data): Free 20K monthly"** (a free monthly allowance, no credit card). It does **not** state
+  a requests-per-second limit, what happens when the allowance is exceeded, or per-request prices. What your account is actually entitled to is **account-specific and not known here**.
+* Traffic API introduction (page last edited 2026-09-15): <https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/product-information/introduction>. Describes real-time observed
+  speeds and travel times; states **no** refresh frequency, usage limit, caching rule or attribution rule for this endpoint.
+* Attribution mechanism for the Maps APIs: Copyrights API, <https://docs.tomtom.com/map-display-api/documentation/tomtom-maps/v2/copyrights/copyrights> (its caption example is
+  "©TomTom"). A TomTom community answer surfaced by search (not re-opened, now redirected) says direct Traffic API users should display notices obtained from that API in the
+  application's legal-notices ("about") section; that is **secondary and unconfirmed**.
+
+**Not verified:** the TomTom developer terms that govern caching, storage, derived data, machine-learning use and attribution **could not be read**: the legal page
+(<https://docs.tomtom.com/legal/terms-and-conditions>) is navigation only for the tool used, and TomTom's website terms say nothing about API data. Consequences, unchanged:
+
+* Readings are **not stored** and **not used to build datasets or train or evaluate models**. Do not change this until the terms are read and explicitly allow it.
+* Whether reusing a reading for up to 5 minutes is allowed is **unconfirmed**; `max-age=0` suggests clients should not rely on cached copies. The strictest behaviour is
+  `LIVE_CACHE_TTL_S=0`, which is the setting in use (see above).
+* The request cap (300 per run) and the 30 s refresh limit are **this project's own safeguards**, not TomTom limits. They stay.
+* The page shows "Traffic data: © TomTom" beside the reading and OpenStreetMap's attribution on the map. **Whether TomTom requires more notices for direct use of this endpoint is
+  unresolved**; before publishing the application or widening its use, read TomTom's current developer terms and attribution rules (or ask TomTom) and follow them.
 
 ### Colour bands are display conventions
 
@@ -455,6 +506,10 @@ Colours: green = checked and fine, amber = works but with a limitation or not ye
 
 Application health and provider health are kept apart: a red "Live traffic" chip with everything else green means the app works and
 only the external provider (or its key) is the problem. Messages never contain keys, absolute paths or stack traces.
+
+**Loading state.** While a run is busy (a place search, a traffic request, a prediction, loading the models, the Diagnostics checks) a spinner names what is happening, for example
+"Loading the trained models (the first time can take 10 to 20 seconds)...". The sidebar shows "Updating... the status below is from the previous action." above the chips until the run
+has finished, so an older status is never mistaken for the current one; the line is removed when the run ends, also if the page crashes.
 
 **Diagnostics** (sidebar; it replaces the old "Files / Status" list and keeps every entry): the same items with what was checked, the
 files the dashboard reads (present / MISSING / optional), and two on-demand checks: **Check models load** (really loads the LSTM and
@@ -499,6 +554,11 @@ The dashboard has **three different kinds of output, and they are labelled as su
 2026-10-28). Nothing in the code limits the year; there is simply no later data, no source of it in this project, and none is
 invented. The models also were never validated for 2026 and showed no skill beyond the per-road mean even on 2024 data.
 
+**Sources searched for newer data (2026-10-30).** No legitimate, usable extension was found: the Kaggle dataset's licence and any newer version could not be verified; the Bengaluru
+open-data listings found (OpenCity, India Data Platform) are traffic *violations*, one-way roads and planning PDFs, not a congestion index, and licences vary per listing; a
+volunteer-built open road-speed dataset on Datameet has a different schema and is not an official feed. Nothing was downloaded, merged or invented. If you obtain a dataset you may
+legally use, follow the steps below.
+
 **If you obtain real newer observations** (in the same columns as the dataset, and with the right to use them), check them first with
 the read-only validator. It changes nothing:
 
@@ -520,6 +580,26 @@ It is not distributed and not streaming; the dataset is small and has no hour-of
 
 `model/evaluation_report.md` / `.json` (written by `comparePerformancePlots.py`): dataset source, split dates, target,
 horizon, features, metrics, artifact hashes, software versions and limitations.
+
+### Independent audit of the saved evaluation (2026-10-30)
+
+`tests/test_evaluation_audit.py` re-checks the saved results by a route that does not use the evaluation scripts. It trains nothing, writes nothing and changes no model file. It found **no
+defect**, so nothing was retrained and no number changed:
+
+* all four models (LSTM, XGBoost, persistence, road mean) are scored on the **identical 856 test rows** (same dates, roads, actual values and order);
+* `metrics.json` equals the metrics recomputed from the saved predictions (largest difference below 1e-7);
+* every "actual" value, and every persistence prediction (the value of the day before the target), equals the raw dataset;
+* the split is chronological (training targets to 2023-10-30, validation to 2024-03-20, test from 2024-03-21) and the road-mean baseline uses **training targets only**;
+* every input window ends the day before its target; the LSTM scaler's range is the **training windows'** range (it differs from the all-data range);
+* hyperparameters are fixed in the training scripts and early stopping uses the validation split. The scripts print the test RMSE, so some unconscious influence of the test score on past
+  choices cannot be excluded; the test set was **not** used for tuning in this audit.
+
+The measured result is unchanged: road-mean baseline RMSE 19.85, LSTM 19.93, XGBoost 20.07, persistence 28.23. The road mean is at least as good as both learned models, and every RMSE
+difference has a 95% bootstrap interval that includes zero. **No model is claimed to win.** The test asserts this too: it fails if a learned model ever appeared to beat the baseline without a
+supported interval, which would force the wording to change.
+
+**What more data would be needed.** The Stage 5A benchmark found no within-road signal beyond each road's usual level. To show a learned model can do better you would need *real* observations
+that are newer (the file ends on 2024-08-09), more frequent than daily, and richer (hourly counts or speeds per road), with a right to use them. None can be generated or assumed here.
 
 ## Stage 5A signal-gate benchmark
 
@@ -578,8 +658,9 @@ python -m unittest tests.test_signal_check -v  # synthetic no-signal and known-s
     ├── src/preflight.py               preflight check (required vs optional components)
     ├── experiments/stage5a/           outputs of the signal-gate benchmark (separate from model/)
     ├── tests/                         core software tests + failure_matrix.py + browser_check.py
-    ├── docs_tests/                    separate read-only tests of the paper/slides
-    ├── notebooks/, doucments/         exploration, slides, research paper
+    ├── docs_tests/                    separate read-only tests of the paper/slides (skip when doucments/ is absent)
+    ├── notebooks/                     exploration
+    └── doucments/ (local only)        slides and research paper: NOT in the repository, absent from a fresh clone
     ├── requirements.txt               core dependencies
     └── requirements-bigdata.txt       optional: PySpark
 
@@ -589,8 +670,9 @@ python -m unittest tests.test_signal_check -v  # synthetic no-signal and known-s
   "Stage 5A signal-gate benchmark"). Do not present the models as accurate forecasters. They are experimental, and the
   evaluation does not show them to be better than the per-road historical mean.
 * Recent real-world performance has not been established: the dataset ends on 2024-08-09 and nothing was validated against later conditions.
-* Real TomTom readings were retrieved through the dashboard for a few Bengaluru points, but TomTom's caching/storage/ML terms are unresolved, the wording of an
-  HTTP 403 is unverified, and coverage of other Bengaluru roads is unknown. On your computer, live traffic is verified only when you see a real success (see "Confirm that real traffic works").
+* Real TomTom readings were retrieved for 20 probe points in the Bengaluru area (no city-wide coverage is claimed; TomTom answers for the nearest road, and the page says when that road is far
+  from your point). TomTom's binding terms, caching/storage/ML rules, attribution requirements and your account's quota are **unresolved** (see "TomTom terms, quota and attribution"), and the wording of
+  a real HTTP 403 has never been observed. On your computer, live traffic is verified only when you see a real success (see "Confirm that real traffic works").
 * No newer historical observations exist in this project; forecasts cannot reach 2025-2026 (see "Forecast data coverage").
 * Community Reports are local, anonymous and unverified; they have no moderation, accounts, editing or photos.
 * Daily, gappy data, so "next day" samples exist only where both days were observed.
@@ -602,7 +684,7 @@ python -m unittest tests.test_signal_check -v  # synthetic no-signal and known-s
   (75.1 vs 83.9), so the evaluation is conditional on that. Results are similar in every window-span bucket.
 * LSTM numbers come from one training run; differences between LSTM, XGBoost and the road-mean baseline are inside the
   bootstrap noise (see `model/evaluation_report.md`), so **no ranking among them is claimed**.
-* The research paper (`doucments/Research Paper/`) and the slides (`doucments/ppt/`) were rewritten to match this
+* (Local files, not in the repository:) the research paper (`doucments/Research Paper/`) and the slides (`doucments/ppt/`) were rewritten to match this
   implementation and the verified results. The originals, which quoted leaky results, hour-of-day / "rush hour"
   claims, model settings the code never used, and several unverifiable or mis-dated references, are kept untouched in
   `doucments/original_backup/` for reference only and must not be presented. Their figures come from
