@@ -6,6 +6,10 @@ user's REAL data/community/community.db. Importing this module points COMMUNITY_
 for the whole test process, so no test can read, create, change or delete the real database. Tests that need a populated store still
 pass their own temporary path with mock.patch.dict(os.environ, ...); that is restored to THIS temporary path afterwards, never to the real one.
 
+It also removes the user's own TomTom settings (TOMTOM_API_KEY, LIVE_CACHE_TTL_S, LIVE_MAX_REQUESTS) from the test process. A developer who has saved a real key
+(or the launcher's TTL setting) must get the same results as one who has not, whichever test module is run on its own; a test that needs a key or a setting
+sets it explicitly with mock.patch.dict. The real key is therefore also never reachable from a test by accident.
+
 Every test module that runs the app or a page imports this (directly or through _guards). tests/test_isolation.py checks it.
 """
 import atexit
@@ -32,4 +36,7 @@ REAL_DB_AT_START = fingerprint()
 _TMP = tempfile.mkdtemp(prefix="tc_test_community_")
 TEST_DB = Path(_TMP) / "community.db"   # not created: viewing never creates a database; a test that submits a report creates it here
 os.environ["COMMUNITY_DB_PATH"] = str(TEST_DB)
+USER_SETTINGS = ("TOMTOM_API_KEY", "LIVE_CACHE_TTL_S", "LIVE_MAX_REQUESTS")
+for _name in USER_SETTINGS:
+    os.environ.pop(_name, None)
 atexit.register(shutil.rmtree, _TMP, ignore_errors=True)

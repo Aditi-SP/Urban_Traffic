@@ -21,6 +21,11 @@ class CommunityDatabaseIsolationTests(unittest.TestCase):
         self.assertEqual(store.db_path().resolve(), _isolation.TEST_DB.resolve())
         self.assertNotEqual(store.db_path().resolve(), store.DEFAULT_DB.resolve())
 
+    def test_the_users_own_tomtom_settings_never_reach_a_test(self):
+        # a developer with a saved key (or the launcher's TTL setting) must get the same results as one without
+        for name in _isolation.USER_SETTINGS:
+            self.assertNotIn(name, os.environ, f"{name} must not leak into the tests; a test that needs it sets it explicitly")
+
     def test_the_real_database_is_unchanged_since_this_process_started(self):
         # size, modification time and content hash: any test that wrote, touched, reset or deleted it would change one of them
         self.assertEqual(_isolation.fingerprint(), _isolation.REAL_DB_AT_START)
