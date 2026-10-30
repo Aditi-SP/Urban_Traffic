@@ -3,6 +3,23 @@
 Forecasts **next-day congestion level per road** in Bangalore with an LSTM and an XGBoost model,
 compares them with simple baselines on the same held-out data, and shows the results in a Streamlit dashboard.
 
+> **Status: experimental.** On the held-out test set neither model beat the simple per-road historical-mean baseline
+> (see "Results"), so this evaluation does **not** show that either model predicts day-to-day changes in congestion. How
+> they perform on recent real-world conditions has **not** been established: the dataset ends on 2024-08-09. The
+> dashboard's forecasts are historical demonstrations, not live traffic and not validated forecasts.
+
+## What works today, and what does not
+
+| Area | Status |
+|---|---|
+| Dashboard, navigation, historical replay and what-if forecasts | Working, on **historical data only** (see "Forecast data coverage") |
+| Live Traffic Map: basemap and place search | Working (OpenStreetMap tiles and Nominatim search; both need an internet connection) |
+| Live traffic readings (TomTom) | **Needs your own TomTom key. No genuine TomTom response has been verified**, so live traffic is not claimed to work |
+| Forecasts for recent dates (up to October 2026) | **Not possible:** the dataset ends on 2024-08-09 and no newer observations are available. None are invented |
+| Community Reports | Working: local, anonymous, unverified text reports |
+| System status and Diagnostics | Real checks (see "System status and Diagnostics") |
+| Model quality | Experimental: neither model beat the per-road historical mean; not validated for 2026 |
+
 ## Dataset
 
 * File: `data/raw/Banglore_traffic_Dataset.csv` (not committed; `*.csv` is git-ignored except `model/*.csv`).
@@ -36,23 +53,42 @@ Baselines: **Persistence** (tomorrow = today) and **Road mean** (each road's tra
 | LSTM | 15.463 | 19.933 | 0.200 |
 | XGBoost | 15.931 | 20.074 | 0.189 |
 | Persistence baseline | 19.105 | 28.232 | -0.605 |
-| Road-mean baseline | 15.338 | 19.846 | 0.207 |
+| Road-mean baseline (each road's training-period average) | 15.338 | 19.846 | 0.207 |
+
+MAE and RMSE are in congestion-level points (0-100 scale; lower is better); R² is higher-is-better. The dashboard shows the
+same four rows beside each other (baseline first) on the **Traffic Forecasts** and **Model Insights** pages, with the RMSE
+difference to the road-mean baseline. Those figures are read from `model/metrics.json`; they are not recomputed.
 
 **Interpretation:** both models beat persistence but do **not** beat the road-mean baseline, i.e. they capture which
-roads are congested on average but essentially no day-to-day signal. In this dataset day-to-day autocorrelation is
-only about 0.2, and congestion is mostly explained by same-day measurements (volume, capacity use) that are not
-available the day before. Earlier versions of this project reported XGBoost R² = 0.9995; that came from target
+roads are congested on average but essentially no day-to-day signal.
+
+*A note on the "lag-1 correlation of about 0.2".* Earlier versions of the saved evaluation report quote a day-to-day (lag-1)
+correlation of about 0.21 as showing that next-day congestion is "weakly predictable". That figure is **pooled across roads**,
+so it is largely driven by persistent differences between roads (some roads are almost always congested, others rarely), not
+by within-road predictability. Once each road's own level is removed, the within-road lag-1 correlation is **approximately 0**
+(0.003 on all data, 95% CI -0.02 to +0.03, in the Stage 5A benchmark below; an earlier exploratory calculation gave 0.002),
+and no weekday, month-of-year or shared-date effect was found either. Congestion on a given day is mostly explained by
+same-day measurements (volume, capacity use) that are not available the day before. The saved `model/evaluation_report.*`
+still contains the pooled figure; it was not regenerated.
+
+Earlier versions of this project reported XGBoost R² = 0.9995; that came from target
 leakage (features computed from the target itself) and is not a valid forecasting result.
 Re-run `python -m src.modelTraining.comparePerformancePlots` to regenerate these numbers
 (`model/saved_metrics.txt`, `model/metrics.json`).
 
 ## Quick start (Windows)
 
+**New here? Three steps** (each is explained in the section named):
+
+1. **Install the dependencies once**: "Setup from scratch" below (creates `.venv` and installs `requirements.txt`). You also need the dataset and the model files listed there.
+2. **Optional, for live traffic: configure TomTom.** Without a key everything else works and the map shows no traffic. See "Setting up `TOMTOM_API_KEY`" (a TomTom developer key; the commands hide what you type and never show the key).
+3. **Run the dashboard**: `.\run_dashboard.ps1` from the project folder (below). The sidebar **System status** and **Diagnostics** then show what works on this computer.
+
 The project's virtual environment sits next to this folder (`..\.venv`). The launchers call it directly, so **you do not
 need to activate anything**.
 
 ```powershell
-cd C:\Users\User\Downloads\Traffic-Congestion-Forecasting-main\Traffic-Congestion-Forecasting-main
+cd "<the folder that contains app.py>"          # for example: open the project folder in File Explorer, then "Open in Terminal"
 .\run_dashboard.ps1                 # quick preflight, then opens the dashboard in your browser
 ```
 
@@ -68,6 +104,21 @@ Or double-click `run_dashboard.bat` (it runs the same script and bypasses the Po
 
 The first start takes about 10 seconds (TensorFlow is slow to import); every click afterwards takes about 1 second.
 On a new machine Streamlit may ask once for an e-mail address: just press Enter.
+
+### Start it and check that it is healthy (Windows PowerShell)
+
+```powershell
+cd "<the folder that contains app.py>"          # for example: open the project folder in File Explorer, then "Open in Terminal"
+
+.\run_dashboard.ps1 -CheckOnly                  # preflight only; the summary must say "Dashboard can launch ... YES"
+.\run_dashboard.ps1 -NoBrowser -Port 8599       # start the dashboard (leave this window open; Ctrl+C stops it)
+
+# in a SECOND PowerShell window:
+(Invoke-WebRequest http://localhost:8599/_stcore/health -UseBasicParsing).Content     # prints: ok
+Get-NetTCPConnection -LocalPort 8599 -State Listen                                    # shows the listening process
+```
+
+Then open http://localhost:8599 . The sidebar **System status** and **Diagnostics** show the real state of each part.
 
 ## Preflight check
 
@@ -88,8 +139,10 @@ It only reads files (never writes, trains or regenerates anything) and separates
 
 ## Setup from scratch (only if `..\.venv` does not exist)
 
+Python 3.11 on Windows is what the project was developed and tested with.
+
 ```powershell
-cd C:\Users\User\Downloads\Traffic-Congestion-Forecasting-main
+cd "<the folder that CONTAINS the project folder>"     # the virtual environment is created next to the project folder, as `.venv`
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r Traffic-Congestion-Forecasting-main\requirements.txt
 # optional, only to re-run the PySpark script (also needs Java 17+):
@@ -115,6 +168,15 @@ python -m unittest discover -s docs_tests -v          # separate: checks paper/s
 python tests/failure_matrix.py                        # 27 broken-project scenarios + Spark-without-Java, on scratch copies (about 7 min)
 # real-browser check (start the dashboard first, e.g. .\run_dashboard.ps1 -Port 8599 -NoBrowser; needs Chrome or Edge):
 python tests/browser_check.py shots 1536 700 8599
+python tests/browser_check.py shots 1280 650 8599
+python tests/browser_check.py shots 800 900 8599
+# these never save a community report; they load map tiles from OpenStreetMap in the test browser
+
+# check a file of newer observations (READ-ONLY; changes nothing); see "Forecast data coverage"
+python -m src.dataProcessing.check_new_data path\to\new_observations.csv --target 2026-10-28
+
+# new-feature tests: status/health, homepage, forecast data gap, Model Insights, validator; community reports; signal-gate benchmark
+python -m unittest tests.test_status_and_data tests.test_community tests.test_signal_check -v
 
 # big-data workflow (PySpark, local mode; needs Java 17+ and requirements-bigdata.txt; REWRITES reports/spark/)
 python -m src.bigdata.spark_analysis
@@ -137,7 +199,12 @@ python -m src.modelTraining.predictLstm
 | Launcher says the virtual environment was not found | `..\.venv` is missing | see "Setup from scratch" |
 | PowerShell: "running scripts is disabled" | execution policy | use `run_dashboard.bat`, or `powershell -ExecutionPolicy Bypass -File .\run_dashboard.ps1` |
 | Spark script: "Java was not found" | PySpark needs Java 17+ | install a JDK (e.g. Temurin from adoptium.net), open a new terminal; the dashboard does not need it |
-| TomTom mode shows "No API key configured" | normal; the key is optional | see "Live prediction demo" below |
+| TomTom mode shows "No API key configured" | normal; the key is optional | see "Setting up `TOMTOM_API_KEY`" below |
+| Live Traffic Map shows "Live traffic is not configured" | the **server process** has no usable `TOMTOM_API_KEY`; the page says why ("Why it was not found") | see "Setting up `TOMTOM_API_KEY`", then "Check the setup" and "Restart the dashboard"; the usual cause is a variable set in another window or after VS Code started |
+| Sidebar says "Live traffic: provider problem" | the last real request to TomTom failed (key rejected, timeout, rate limit, no data near the point) | the text next to it says which; see "Check the setup" (`python -m src.live.check_key --request`) |
+| Sidebar says "Live traffic: key found, not yet tested" | a key exists but no request has been made in this run | search a place and press **Get traffic for this place** |
+| Forecasts and replays stop in August 2024 | the dataset ends on 2024-08-09 | expected; see "Forecast data coverage" |
+| Community Reports says the report database is unavailable | the folder `data\community` cannot be written, or the file is damaged | make the folder writable; to start over, close the dashboard and delete `data\community\community.db` (it holds only local reports) |
 
 ## Live prediction demo (dashboard tab)
 
@@ -146,11 +213,19 @@ python -m src.modelTraining.predictLstm
   scenario** where you edit the day-t conditions (presets use the road's own training-period percentiles).
   The output is always labelled as historical/what-if, never as live traffic. No congestion category and no
   uncertainty interval is shown (no validated method/thresholds exist).
-* **Mode 2 – Real-time API:** an interface for the TomTom Traffic Flow API (`src/app/realtime.py`). The API only gives
-  a current speed/travel-time snapshot, so it **cannot** supply the models' inputs (volume, capacity, incidents,
-  weather, history); the app displays the compatibility gap and blocks prediction. It is **unverified against the live
-  service** (no key was available). Key: environment variable `TOMTOM_API_KEY` or `.streamlit/secrets.toml`
-  (see `.streamlit/secrets.toml.example`).
+* **Mode 2 – Real-time API:** shows a TomTom Traffic Flow observation for a location you enter (inside the Bengaluru
+  area). The API only gives a current speed/travel-time snapshot, so it **cannot** supply the models' inputs (volume,
+  capacity, incidents, weather, history); the app displays the compatibility gap and blocks prediction. The reading is a
+  live observation, never a forecast, and is labelled "Last fetched" (the provider gives no measurement time). Requests
+  go through the **same provider service as the Live Traffic Map** (`src/live/tomtom.py`: shared request cap, refresh
+  limit, 429 cooldown and `LIVE_CACHE_TTL_S` setting, in memory only; see "Live Traffic Map" below), so a reading or
+  limit hit on one page applies to the other. The provider path itself was checked with real single-point requests (see "Verification status of the TomTom integration"); this page's Mode 2 uses that same path.
+  Key: environment variable `TOMTOM_API_KEY` or `.streamlit/secrets.toml` (see `.streamlit/secrets.toml.example`).
+  `src/live/tomtom.py` is the only TomTom client in the application; the older stand-alone request function in
+  `src/app/realtime.py` (no cache or request cap) has been removed, and `realtime.py` now only describes the gap between
+  provider fields and model inputs.
+* **Experimental models:** the LSTM and XGBoost forecasts are shown beside the persistence and road-mean baselines, and the
+  pages state that neither model beat the road-mean baseline on the test set.
 * A 2–3 minute presentation script is in [DEMO_SCRIPT.md](DEMO_SCRIPT.md).
 
 ## Live Traffic Map (dashboard page)
@@ -200,28 +275,130 @@ What it does:
   pricing page (read 2026-10-29) lists 20,000 free monthly requests for Flow Segment Data, but your key's actual
   allowance and limits should be checked in your TomTom account.
 * The key is used only by the Python server process; it is never sent to the browser or displayed.
+* The same provider service (and so the same safeguards below) also serves Mode 2 of the **Traffic Forecasts** page.
 
 ### Setting up `TOMTOM_API_KEY` (optional)
 
-The map and place search work without a key; only the traffic reading needs one. Never put a real key in source files or
-commit it.
+The map and place search work without a key; only live traffic needs one. You need your own TomTom developer key **with the Traffic API
+enabled for it** (check TomTom's current plans, request limits and terms yourself; they are not verified here). Never put a real key in
+source files, screenshots, Git or a chat. `your-key-here` below is a placeholder.
+
+**The one rule:** the variable must be named exactly `TOMTOM_API_KEY`, and it must be present in the environment of the **server process**
+(the python process that runs the dashboard) when that process **starts**. Windows copies variables into a process at its start. So a
+variable you set later, in another terminal tab, or saved for your user *after* a terminal was opened (**terminals inside VS Code keep the
+environment VS Code started with**), is not seen by a dashboard that was started from that terminal, nor by one that is already running.
+That is the usual reason for "I set it but it still says not configured".
+
+**Recommended (saved once; the launcher picks it up even from an older terminal).** In PowerShell, type this and paste the key at the
+hidden prompt (it is not echoed and does not enter your command history):
 
 ```powershell
-# for the current PowerShell window only, then start the dashboard from the same window
-$env:TOMTOM_API_KEY = "your-key-here"
+$secure = Read-Host "Paste your TomTom key (input is hidden)" -AsSecureString
+$plain  = [System.Net.NetworkCredential]::new('', $secure).Password
+[Environment]::SetEnvironmentVariable("TOMTOM_API_KEY", $plain, "User")
+Remove-Variable plain, secure
+```
+
+Then **stop any running dashboard and start it with the launcher** (see "Restart the dashboard" below):
+
+```powershell
+cd "<the folder that contains app.py>"          # for example: open the project folder in File Explorer, then "Open in Terminal"
 .\run_dashboard.ps1
 ```
 
-Alternatively copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (git-ignored) and replace the
-placeholder. `your-key-here` is a placeholder, not a working key.
+`run_dashboard.ps1` loads `TOMTOM_API_KEY`, `LIVE_CACHE_TTL_S` and `LIVE_MAX_REQUESTS` from your saved Windows settings whenever the terminal
+you start it from does not have them, and tells you so (it never prints the key). Starting with a bare `streamlit run app.py` does **not**
+do this. To remove the saved key: `[Environment]::SetEnvironmentVariable("TOMTOM_API_KEY", $null, "User")`.
+
+*Alternative, for this PowerShell window only:* `$env:TOMTOM_API_KEY = "your-key-here"` and then `.\run_dashboard.ps1` **in the same window**.
+
+*Alternative, a file:* create `.streamlit\secrets.toml` **inside the inner project folder** (the one that contains `app.py`) or
+`%USERPROFILE%\.streamlit\secrets.toml` with exactly one line (git-ignored; see `.streamlit\secrets.toml.example`):
+
+```toml
+TOMTOM_API_KEY = "your-key-here"
+```
+
+The environment variable wins over the file. A file that is not valid TOML, or has a different entry name, is reported by the checks below
+instead of being ignored silently.
+
+### Check the setup, in this order (the key is never printed)
+
+```powershell
+# 0. Only in a terminal that was opened BEFORE you saved the variable: copy the saved value into THIS window (nothing is printed)
+$env:TOMTOM_API_KEY = [Environment]::GetEnvironmentVariable("TOMTOM_API_KEY", "User")
+
+# 1. What would a dashboard started from this window see? (no network request)
+python -m src.live.check_key
+#    expected: "TomTom key: configured (source: environment variable). The value is not shown."
+
+# 2. Does the launcher see it?
+.\run_dashboard.ps1 -CheckOnly
+#    expected: "TomTom key: found in the environment (value not shown)."   and   "Optional TomTom key configured . YES"
+
+# 3. ONE real request to TomTom with your key (uses one request of your quota; nothing is stored)
+python -m src.live.check_key --request
+#    expected: "RESULT: OK. TomTom returned a valid traffic reading: current speed ... km/h ..."
+```
+
+If step 1 or 2 says the key is not configured, the text next to it says why: no variable with that name, a similarly named variable (for
+example `TOMTOM_KEY`), a value with spaces, a secrets file that is not valid TOML, or "saved in your Windows user environment but this process
+does not have it". If step 3 fails, its `RESULT:` line says which of these it is:
+
+| `RESULT` / message | Meaning | What to do |
+|---|---|---|
+| `NOT CONFIGURED` | no usable key in this terminal | follow the lines above it |
+| `KEY NOT ACCEPTED` / "the key was not accepted (it is invalid or has expired)" | invalid or expired credentials | copy the key again (completely, no spaces); create a new one if needed |
+| `KEY MAY NOT BE ENABLED FOR THE TRAFFIC FLOW API` | HTTP 403 whose answer suggests the Traffic API is not enabled for the key (**the wording of a real 403 is unverified; this is a guess from the answer's text**) | in your TomTom developer account check that the Traffic API is enabled for that key |
+| `QUOTA MAY BE USED UP` | HTTP 403 whose answer suggests the quota is exhausted (**same caveat: unverified wording**) | check usage and plan in your TomTom account |
+| `KEY NOT ACCEPTED` after a 403 that says nothing useful | the neutral message: "the key may be invalid, expired, not enabled for the Traffic API, or over its quota. TomTom's answer did not say which" | check the key in your TomTom developer account |
+| `RATE LIMITED` | HTTP 429 | wait; the dashboard pauses requests for 60 s |
+| `TIMEOUT` / `NO CONNECTION` | network problem | check your internet connection and retry |
+| `TOMTOM PROBLEM` | TomTom reported a temporary problem (HTTP 5xx) | retry later |
+| `NO TRAFFIC DATA NEAR THE POINT` | no data for the point | coverage of a given road is only known from a real response |
+| `UNREADABLE ANSWER` | the response was not in the expected format | report it; nothing is guessed or filled in |
+
+An "HTTP 403" whose answer does not say why is shown as "the key may be invalid, expired, not enabled for the Traffic API, or over its quota";
+TomTom's error wording is not guaranteed, so only clear cases are told apart.
+
+### Restart the dashboard (a running dashboard never sees a key set after it started)
+
+```powershell
+# in the window that runs it: press Ctrl+C. If you cannot find that window, list the dashboards (the port is in the command line):
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'streamlit run app.py' } |
+    Select-Object ProcessId, @{n='Port';e={ if ($_.CommandLine -match '--server.port (\d+)') { $Matches[1] } }}, CreationDate
+
+# stop the ones you want (stops the process and its children; this stops EVERY Streamlit app named app.py):
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'streamlit run app.py' } | ForEach-Object { taskkill /PID $_.ProcessId /T /F }
+
+# start it again and note the URL it prints (if the port is busy it uses the next one, and says so):
+.\run_dashboard.ps1
+```
+
+If the launcher says "Port 8501 is busy", an **old dashboard is still running** on 8501 and your browser tab may still be showing it; open the
+URL the launcher prints, or stop the old one first.
+
+### Confirm that real traffic works
+
+1. In the dashboard sidebar open **Diagnostics (files, models, data)**. Under *TomTom key configuration* it must say
+   **"TomTom key: configured (source: ...)"**. It also shows when this dashboard process started and the `LIVE_CACHE_TTL_S` / `LIVE_MAX_REQUESTS`
+   values it is really using (and warns if they differ from the ones saved for your Windows user).
+2. The sidebar chip then reads **Live traffic: key found, not yet tested** (amber; a key alone proves nothing).
+3. Open **Live Traffic Map**, search `Silk Board Junction`, press **Search**, choose the result, press **Get traffic for this place**.
+4. **Real traffic is working only when** a coloured segment appears, the cards show **Current speed** and **Last fetched**, the caption shows
+   "Traffic data: © TomTom", and the sidebar chip changes to **Live traffic: last response OK hh:mm:ss**. (TomTom gives no measurement time:
+   "Last fetched" is this computer's clock.)
+5. If it fails, the page shows the reason from the table above and the chip says **Live traffic: provider problem**; no traffic is drawn.
+
+Until step 4 has happened, live traffic is **unverified**. Readings stay in memory only.
 
 ### Verification status of the TomTom integration
 
-**A successful live TomTom response has not been verified.** No valid API key was available during development. The
-success path is covered only by tests with mocked responses that were written from TomTom's published documentation (not
-recorded from the service). Against the real TomTom endpoint, only the "key rejected" (HTTP 401) error path was checked,
-using a deliberately invalid key. The real behaviour with a valid key (response details, coverage of a given road,
-quotas, terms of use) is untested. The Nominatim search was tested with one real request.
+**What has been verified, and what has not (updated 2026-10-30).**
+
+* **Verified against the real service:** with a valid key, single-point Flow Segment Data requests made through the running dashboard (after a real Nominatim search for a Bengaluru place) returned valid readings, which the page drew as a traffic segment with current speed, free-flow speed and the TomTom attribution. A deliberately invalid key was rejected with HTTP 401. These are a handful of requests for a few points: they show that the integration works, and say nothing about coverage of other roads.
+* **Still unverified:** how TomTom words an HTTP **403** (no access to the Traffic API, quota, or something else). The error classifier (`src/live/tomtom.py`, `_denied`) therefore treats a 403 neutrally: it names the possible causes and says TomTom did not say which. Its word lists for "quota" and "no permission" are heuristics that have never been matched against a real 403 body; when neither list matches, the neutral message is used. The response body is only used to choose a message and is never shown or logged.
+* **Unverified:** quotas and the terms of use (next section). Nothing is stored, and the cache stays at `LIVE_CACHE_TTL_S=0`.
 
 ### TomTom terms: what has and has not been verified
 
@@ -264,6 +441,75 @@ validated traffic thresholds**; they have not been checked against any ground tr
   published integrity hashes each time it loads, so the browser loads no script from a CDN. It is not updated
   automatically.
 
+## System status and Diagnostics
+
+The sidebar **System status** chips and the homepage **At a glance** cards come from real checks (`src/ui/health.py`), not fixed text.
+Colours: green = checked and fine, amber = works but with a limitation or not yet tested, red = a check failed, grey = unknown.
+
+| Item | What is actually checked | Typical text today |
+|---|---|---|
+| Live traffic (TomTom, **external**) | whether a key is configured, and what the shared provider service has seen in this run (last valid response, last failure, rate-limit pause). **No test request is sent** | "Live traffic: not configured" (red), then "key found, not yet tested", then "last response OK hh:mm:ss" or "provider problem" |
+| Historical data | the latest observation date in the loaded dataset and its age in days | "Data: historical, 2022-2024 (latest 2024-08-09)" (amber while older than 30 days) |
+| Models | the trained files exist (loading is tested on demand) | "Models: not validated for 2026" (amber; red if a file is missing) |
+| Community reports | the local report database can be opened | "Reports: working" |
+
+Application health and provider health are kept apart: a red "Live traffic" chip with everything else green means the app works and
+only the external provider (or its key) is the problem. Messages never contain keys, absolute paths or stack traces.
+
+**Diagnostics** (sidebar; it replaces the old "Files / Status" list and keeps every entry): the same items with what was checked, the
+files the dashboard reads (present / MISSING / optional), and two on-demand checks: **Check models load** (really loads the LSTM and
+XGBoost) and **Run preflight** (the same fast preflight the launcher runs). A failure is shown in red with its reason; nothing is
+shown as OK that was not checked.
+
+**Homepage** (the Live Traffic Map page): the setup message when no key is configured, the map and search, then **At a glance**: live
+traffic, data freshness, a one-sentence model summary quoted from the saved held-out evaluation, and the number of community reports,
+with links to Traffic Forecasts, Model Insights and Community Reports. **Model Insights** (its own page) documents the dataset, the
+held-out split, the baselines and what MAE, RMSE and R² mean. None of this is a live measurement or a forecast.
+
+## Community Reports
+
+Short, **anonymous, unverified** text reports from road users (category, road or place, description), stored **on this computer**
+in `data/community/community.db` (SQLite; set the `COMMUNITY_DB_PATH` environment variable to use another file). The folder is
+git-ignored. Everyone using the same running dashboard sees the same reports. They are not traffic measurements and are never used
+by the models.
+
+* **Sending:** fill in the form and press **Send report**. "Saved" is shown only after the report was stored and read back from the
+  database; otherwise you get an error that says what to fix (too short or long, a missing field, a duplicate, a rate limit, a
+  database problem). Nothing is dropped silently.
+* **Listing:** the newest 50 reports, read from the database on every page load (so they survive a refresh), each with its age;
+  reports older than a day are marked "possibly outdated". With no reports the page says so; sample reports are never shown.
+* **Safeguards (no accounts):** text only, 3-120 characters for the place and 10-500 for the description; control characters
+  refused; at most 5 reports per browser session per 10 minutes, 60 per hour overall, 10,000 in total; an identical report within 10
+  minutes is refused; a double click cannot create two rows. All user text is shown as escaped plain text. There is **no edit,
+  delete or photo upload** in the application. Please do not enter names, phone numbers or number plates.
+* **Viewing never creates the database**; the first saved report does. To remove all reports, close the dashboard and delete
+  `data\community\community.db` yourself.
+
+## Forecast data coverage
+
+The dashboard has **three different kinds of output, and they are labelled as such**:
+
+| Kind | What it is | Dates |
+|---|---|---|
+| **Historical observed traffic** | the real daily records of the Kaggle dataset (provenance and licence unverified); observed, but **not live** | 2022-01-01 to **2024-08-09** |
+| **Historical replay and what-if** | the models re-run on real past days, or on past days with the last day's conditions edited. Neither is a forecast of the future | past days only |
+| **Model-generated future forecasts** | one day after the last observed day (the models' only horizon) | **not available**: the latest date this dataset can reach is 2024-08-10; nothing newer has been observed |
+
+**Why forecasts do not reach October 2026:** the dataset is a static file whose last observation is 2024-08-09 (810 days before
+2026-10-28). Nothing in the code limits the year; there is simply no later data, no source of it in this project, and none is
+invented. The models also were never validated for 2026 and showed no skill beyond the per-road mean even on 2024 data.
+
+**If you obtain real newer observations** (in the same columns as the dataset, and with the right to use them), check them first with
+the read-only validator. It changes nothing:
+
+```powershell
+python -m src.dataProcessing.check_new_data path\to\new_observations.csv --target 2026-10-28
+```
+
+It applies the project's own validation rules, and reports the date range, overlap with the current data, gaps, unknown roads and
+whether the file reaches the target date. Using such data for forecasts would additionally require merging it deliberately,
+retraining and re-evaluating the models, and then a new held-out evaluation: that needs separate approval and is not done here.
+
 ## Big-data component
 
 `src/bigdata/spark_analysis.py` uses PySpark (local mode, one machine) to validate/clean the CSV (FAILFAST schema, null,
@@ -275,10 +521,38 @@ It is not distributed and not streaming; the dataset is small and has no hour-of
 `model/evaluation_report.md` / `.json` (written by `comparePerformancePlots.py`): dataset source, split dates, target,
 horizon, features, metrics, artifact hashes, software versions and limitations.
 
+## Stage 5A signal-gate benchmark
+
+`src/analysis/signal_check.py` asks whether the data contains within-road, time-dependent signal that a learned model could
+use beyond each road's usual level. It **trains no model**, uses no network and writes only to its own output directory
+(`experiments/stage5a/`; it refuses to write into `model/`, `data/`, the documents, `src/` or `tests/`). Saved prediction files
+in `model/` are only read.
+
+```powershell
+python -m src.analysis.signal_check            # writes experiments/stage5a/signal_check.json and .md (about 10 seconds)
+python -m unittest tests.test_signal_check -v  # synthetic no-signal and known-signal tests, plus real-data checks
+```
+
+* **Target and split:** the project's own: the same road on the next calendar day, chronological 70/15/15 by target date.
+* **Baselines (no tuning, no labels leaked):** expanding per-road mean (the reference; uses only observations up to day t),
+  per-road training mean, per-road weekday mean, last value, last-7 mean, global mean.
+* **Evaluation:** the official test split, and a rolling-origin evaluation (5 chronological folds after a warm-up of the first
+  half of the dates). Reported: MAE, RMSE, R², within-road correlation of prediction and actual, and the RMSE difference to
+  the reference with a date-cluster bootstrap confidence interval.
+* **Signal diagnostics (development period only, so test labels play no part):** within-road autocorrelation at lags
+  1, 2, 3, 7 and 14 days, and weekday, month-of-year, shared-date and road-by-month effects, with Bonferroni-adjusted tests.
+* **Result on this dataset:** `NO_USABLE_SIGNAL`. No baseline is distinguishably better than the expanding road mean, the
+  within-road lag-1 correlation is about 0, and no calendar effect was found. The saved LSTM and XGBoost differ from the
+  reference by +0.12 and +0.26 RMSE (confidence intervals include 0). Training a new learned model on this dataset is not
+  justified by this evidence.
+* **Limits:** it describes this dataset only (its provenance is unverified), small effects cannot be excluded, and it does
+  not say how a model would perform on different data.
+
 ## Project structure
 
     ├── app.py                         Streamlit dashboard
     ├── data/raw/                      Banglore_traffic_Dataset.csv (you must supply it)
+    ├── data/community/                community.db, created by the first saved report (git-ignored)
     ├── model/
     │   ├── model.h5, scaler.pkl, lstm_features.json            LSTM + its scaler/feature order
     │   ├── xgboost_model.json, xgboost_features.json           XGBoost + its feature order
@@ -291,6 +565,10 @@ horizon, features, metrics, artifact hashes, software versions and limitations.
     │   ├── app/demo.py, realtime.py          demo logic and real-time interface
     │   ├── bigdata/spark_analysis.py         PySpark workflow
     │   ├── dataProcessing/forecast_data.py   shared pipeline (features, windows, split)
+    │   ├── analysis/signal_check.py          Stage 5A signal-gate benchmark (trains nothing)
+    │   ├── community/store.py                Community Reports store (SQLite, local, anonymous)
+    │   ├── dataProcessing/check_new_data.py  read-only validator for newer observations
+    │   ├── ui/health.py, diagnostics.py      real status checks, the System status chips and the Diagnostics panel
     │   ├── live/geo.py, geocode.py, tomtom.py    Live Traffic Map: location checks, Nominatim search, TomTom client
     │   ├── ui/                               dashboard pages/navigation (live_map.py, leaflet_map.py, vendor/leaflet/)
     │   ├── dataProcessing/preprocess2.py, preprocess_xgboost.py   LEGACY, not used for training
@@ -298,6 +576,7 @@ horizon, features, metrics, artifact hashes, software versions and limitations.
     │                       predictXgboost.py, predictLstm.py
     ├── run_dashboard.ps1 / .bat       launchers (use ..\.venv directly; run the preflight first)
     ├── src/preflight.py               preflight check (required vs optional components)
+    ├── experiments/stage5a/           outputs of the signal-gate benchmark (separate from model/)
     ├── tests/                         core software tests + failure_matrix.py + browser_check.py
     ├── docs_tests/                    separate read-only tests of the paper/slides
     ├── notebooks/, doucments/         exploration, slides, research paper
@@ -306,10 +585,17 @@ horizon, features, metrics, artifact hashes, software versions and limitations.
 
 ## Limitations
 
-* Weak signal: next-day congestion is barely predictable from this data; do not present the models as accurate forecasters.
+* No within-road signal found: beyond each road's usual level, next-day congestion could not be predicted from this data (see
+  "Stage 5A signal-gate benchmark"). Do not present the models as accurate forecasters. They are experimental, and the
+  evaluation does not show them to be better than the per-road historical mean.
+* Recent real-world performance has not been established: the dataset ends on 2024-08-09 and nothing was validated against later conditions.
+* Real TomTom readings were retrieved through the dashboard for a few Bengaluru points, but TomTom's caching/storage/ML terms are unresolved, the wording of an
+  HTTP 403 is unverified, and coverage of other Bengaluru roads is unknown. On your computer, live traffic is verified only when you see a real success (see "Confirm that real traffic works").
+* No newer historical observations exist in this project; forecasts cannot reach 2025-2026 (see "Forecast data coverage").
+* Community Reports are local, anonymous and unverified; they have no moderation, accounts, editing or photos.
 * Daily, gappy data, so "next day" samples exist only where both days were observed.
 * One chronological split (no cross-validation); the test period is about 4.5 months.
-* The dataset looks synthetic/aggregated rather than raw sensor data (43% of congestion values are exactly 100); this is
+* The dataset looks synthetic/aggregated rather than raw sensor data (about 43.5% of congestion values are exactly 100); this is
   an inference, not a verified fact.
 * An input window is the last 7 **observations**, not 7 calendar days (57% of windows span more than 7 days; the gap is a
   feature). Samples exist only when day t+1 was observed, and days whose next day is missing have lower congestion
