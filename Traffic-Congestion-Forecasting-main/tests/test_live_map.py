@@ -62,11 +62,54 @@ def flow_payload(**seg_over):
     return {"flowSegmentData": seg}
 
 
+# Error bodies RECORDED from the LIVE TomTom service on 2026-10-30 with a real key (nothing in them is secret). These, not guesses, decide how
+# a status is classified. The 404 for an unknown service version had a different JSON shape: only its FIELD NAMES were recorded, so its values are constructed.
+REC_NO_ROAD = {"error": "Point too far from nearest existing segment.", "httpStatusCode": 400,
+               "detailedError": {"code": "INVALID_REQUEST", "message": "Point too far from nearest existing segment."}}
+REC_BAD_POINT = {"error": "Invalid point format.", "httpStatusCode": 400, "detailedError": {"code": "INVALID_REQUEST", "message": "Invalid point format."}}
+REC_NO_POINT = {"error": "Missing point parameter.", "httpStatusCode": 400, "detailedError": {"code": "INVALID_REQUEST", "message": "Missing point parameter."}}
+REC_BAD_KEY = {"detailedError": {"code": "Unauthorized", "message": "You are missing valid authentication credentials"}}   # wrong key AND no key: both 401
+CONSTRUCTED_404 = {"type": "about:blank", "title": "Not Found", "status": 404, "detail": "constructed: only the field names were recorded"}
+
+
 def ok_get(payload=None):
     return mock.Mock(return_value=FakeResp(200, flow_payload() if payload is None else payload))
 
 
 # ======================================================================================================== validation
+class NearestSegmentDistanceTests(unittest.TestCase):
+    """TomTom answers for the NEAREST road. The page says so when that road is not at the chosen point."""
+
+    def obs(self, segment, lat=12.9159, lon=77.6240):
+        return tomtom.FlowObservation(lat=lat, lon=lon, current_speed_kmh=20, free_flow_speed_kmh=40, current_travel_time_s=60, free_flow_travel_time_s=30,
+                                      confidence=0.9, road_closure=False, frc="FRC1", segment=tuple(segment), fetched_at=1000.0)
+
+    def test_a_point_on_the_road_is_at_distance_zero(self):
+        self.assertLess(tomtom.nearest_segment_distance_m(self.obs([(12.9159, 77.6230), (12.9159, 77.6250)])), 0.5)
+
+    def test_the_distance_is_to_the_line_between_vertices_not_only_to_the_vertices(self):
+        # a long road passing 100 m north of the point: both vertices are ~1 km away, the line itself is 100 m away
+        d = tomtom.nearest_segment_distance_m(self.obs([(12.9159 + 0.0009, 77.6140), (12.9159 + 0.0009, 77.6340)]))
+        self.assertAlmostEqual(d, 0.0009 * 111_320, delta=2)
+
+    def test_a_road_300_metres_east_is_reported_as_about_300_metres(self):
+        d = tomtom.nearest_segment_distance_m(self.obs([(12.9150, 77.6240 + 0.0028), (12.9170, 77.6240 + 0.0028)]))
+        self.assertAlmostEqual(d, 0.0028 * 111_320 * math.cos(math.radians(12.9159)), delta=3)
+        self.assertGreater(d, tomtom.FAR_SEGMENT_NOTE_M)
+
+    def test_the_page_says_the_reading_is_for_the_nearest_road_only_when_it_is_far(self):
+        far = flow_payload(coordinates={"coordinate": [{"latitude": 12.9150, "longitude": 77.6268}, {"latitude": 12.9170, "longitude": 77.6268}]})
+        near = flow_payload()   # the standard fixture: the road passes right at the point
+        with_far = PageHarness(key=KEY, tomtom_outcome=FakeResp(200, far)).start()
+        self.addCleanup(with_far.stop)
+        with_far.search("silk board junction").choose(0).fetch()
+        self.assertIn("TomTom answered for the nearest road, about", " ".join(c.value for c in with_far.at.caption))
+        with_near = PageHarness(key=KEY, tomtom_outcome=FakeResp(200, near)).start()
+        self.addCleanup(with_near.stop)
+        with_near.search("silk board junction").choose(0).fetch()
+        self.assertNotIn("nearest road, about", " ".join(c.value for c in with_near.at.caption))
+
+
 class GeoTests(unittest.TestCase):
     def test_valid_location_inside_the_bengaluru_area(self):
         self.assertEqual(geo.validate_location(12.97, 77.59), (12.97, 77.59))
@@ -288,11 +331,22 @@ class TomTomClientTests(unittest.TestCase):
 
     # ---- HTTP problems, timeouts
     def test_http_status_codes_map_to_clear_kinds(self):
-        for status, kind in ((401, "auth"), (403, "auth"), (429, "rate_limited"), (400, "no_segment"), (404, "no_segment"),
-                             (500, "server"), (503, "server"), (302, "server")):
-            with self.subTest(status), self.assertRaises(tomtom.ProviderError) as cm:
-                self.fetch(mock.Mock(return_value=FakeResp(status, {})))
+        cases = [(401, REC_BAD_KEY, "auth"), (401, {}, "auth"), (403, {}, "auth"), (429, {}, "rate_limited"),
+                 (400, REC_NO_ROAD, "no_segment"),                                                      # the ONLY 400 that means "no road near the point"
+                 (400, REC_BAD_POINT, "unexpected_status"), (400, REC_NO_POINT, "unexpected_status"), (400, {}, "unexpected_status"),
+                 (404, CONSTRUCTED_404, "unexpected_status"), (404, {}, "unexpected_status"), (405, {}, "unexpected_status"),
+                 (596, {}, "unexpected_status"), (302, {}, "unexpected_status"),                        # statuses this application does not understand
+                 (500, {}, "server"), (503, {}, "server")]
+        for status, body, kind in cases:
+            with self.subTest(status=status, body=str(body)[:40]), self.assertRaises(tomtom.ProviderError) as cm:
+                self.fetch(mock.Mock(return_value=FakeResp(status, body)))
             self.assertEqual(cm.exception.kind, kind, status)
+
+    def test_an_unreadable_error_body_never_decides_a_cause(self):
+        for resp in (FakeResp(400, json_error=True), FakeResp(400, []), FakeResp(400, "text"), FakeResp(400, {"error": 5})):
+            with self.subTest(str(resp._payload)[:20]), self.assertRaises(tomtom.ProviderError) as cm:
+                self.fetch(mock.Mock(return_value=resp))
+            self.assertEqual(cm.exception.kind, "unexpected_status")
 
     def test_timeout_and_network_errors(self):
         for exc, kind in ((requests.Timeout("slow"), "timeout"), (requests.ConnectTimeout("slow"), "timeout"),
@@ -487,6 +541,7 @@ class LeafletTests(unittest.TestCase):
 
 
 # ======================================================================================================== the page
+import streamlit as st  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 PAGE = str(root_dir / "src" / "ui" / "pages" / "live_map.py")
@@ -683,7 +738,8 @@ class LiveMapPageTests(unittest.TestCase):
     def test_provider_problems_are_explained_and_draw_nothing(self):
         cases = [(requests.Timeout("slow"), "did not answer in time"), (requests.ConnectionError(f"x key={KEY}"), "Could not reach TomTom"),
                  (FakeResp(401, {}), "rejected the request"), (FakeResp(403, {}), "rejected the request"),
-                 (FakeResp(429, {}), "limiting requests"), (FakeResp(400, {}), "no traffic segment"), (FakeResp(503, {}), "temporarily unavailable"),
+                 (FakeResp(429, {}), "limiting requests"), (FakeResp(400, REC_NO_ROAD), "no traffic segment"), (FakeResp(503, {}), "temporarily unavailable"),
+                 (FakeResp(404, CONSTRUCTED_404), "does not recognise"), (FakeResp(400, REC_BAD_POINT), "does not recognise"),
                  (FakeResp(200, {"unexpected": 1}), "rejected"), (FakeResp(200, json_error=True), "could not be read")]
         for outcome, expected in cases:
             with self.subTest(expected):
@@ -792,6 +848,86 @@ class SidebarFollowsTheLatestFetchTests(unittest.TestCase):
         h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
         side = " ".join(m.value for m in h.at.sidebar.markdown) + " ".join(c.value for c in h.at.sidebar.caption)
         self.assertNotIn(KEY, side)
+
+
+class RecordedUi:
+    """Records what a run PUTS on the screen while it is busy (a spinner text, a caption), because the final element tree never shows it."""
+
+    def __init__(self):
+        from streamlit.delta_generator import DeltaGenerator
+        self.spinners, self.captions = [], []
+        self._dg, self._orig_caption, self._orig_spinner = DeltaGenerator, DeltaGenerator.caption, st.spinner
+        outer = self
+
+        def caption(dg, body, *a, **k):
+            outer.captions.append(str(body))
+            return outer._orig_caption(dg, body, *a, **k)
+
+        def spinner(text="In progress...", *a, **k):
+            outer.spinners.append(str(text))
+            return outer._orig_spinner(text, *a, **k)
+        self._patches = [mock.patch.object(DeltaGenerator, "caption", caption), mock.patch.object(st, "spinner", spinner)]
+
+    def __enter__(self):
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+
+
+class LoadingStateTests(unittest.TestCase):
+    """The sidebar says which status it is showing while a run is busy, and a slow operation says what it is doing. The line never outlives the run."""
+
+    def harness(self, **kw):
+        h = PageHarness(script=APP, **kw).start()
+        self.addCleanup(h.stop)
+        return h
+
+    def test_the_first_run_says_checking_and_later_runs_say_the_status_is_from_the_previous_action(self):
+        with RecordedUi() as ui:
+            h = self.harness(key=KEY)
+            first = [c for c in ui.captions if c.startswith(("Checking", "Updating"))]
+            self.assertEqual(first, ["Checking..."])
+            ui.captions.clear()
+            h.search("silk board junction")                      # a later run of the same session
+        later = [c for c in ui.captions if c.startswith(("Checking", "Updating"))]
+        self.assertEqual(later, ["Updating... the status below is from the previous action."])
+
+    def test_the_loading_line_is_gone_when_the_run_has_finished(self):
+        h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
+        side = " ".join(c.value for c in h.at.sidebar.caption)
+        self.assertNotIn("Updating", side)
+        self.assertNotIn("Checking", side)
+        self.assertIn("Live traffic: last response OK", " ".join(m.value for m in h.at.sidebar.markdown))   # and the status is the fresh one
+
+    def test_a_page_that_crashes_still_gets_a_fresh_status_and_no_leftover_loading_line(self):
+        def crashing_pages(st_):
+            def broken():
+                raise RuntimeError("deliberate failure of a test page")
+            return [st_.Page(broken, title="Live Traffic Map", url_path="live-map", default=True)]
+        from src.ui import navigation
+        with mock.patch.object(navigation, "build_pages", crashing_pages), mock.patch.dict(os.environ), \
+                mock.patch.object(tomtom, "SERVICE", tomtom.FlowService()):
+            os.environ["TOMTOM_API_KEY"] = KEY
+            at = AppTest.from_file(APP, default_timeout=120).run()
+        self.assertTrue(any("deliberate failure" in e.value for e in at.exception), "the page's own error is still reported, not hidden")
+        self.assertIn("System status", " ".join(m.value for m in at.sidebar.markdown))
+        self.assertIn("Live traffic: key found, not yet tested", " ".join(m.value for m in at.sidebar.markdown))
+        self.assertNotIn("Updating", " ".join(c.value for c in at.sidebar.caption))
+        self.assertNotIn("Checking", " ".join(c.value for c in at.sidebar.caption))
+
+    def test_a_place_search_shows_that_it_is_searching(self):
+        with RecordedUi() as ui:
+            self.harness(key=KEY).search("silk board junction")
+        self.assertIn("Searching OpenStreetMap...", ui.spinners)
+
+    def test_a_traffic_request_shows_that_it_is_contacting_tomtom(self):
+        with RecordedUi() as ui:
+            self.harness(key=KEY).search("silk board junction").choose(0).fetch()
+        self.assertIn("Contacting TomTom...", ui.spinners)
 
 
 if __name__ == "__main__":

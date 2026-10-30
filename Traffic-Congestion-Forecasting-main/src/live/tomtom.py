@@ -6,8 +6,17 @@ Documentation read: https://docs.tomtom.com/traffic-api/documentation/tomtom-map
   response: {"flowSegmentData": {currentSpeed, freeFlowSpeed, currentTravelTime, freeFlowTravelTime, confidence,
                                   roadClosure, frc, coordinates: {coordinate: [{latitude, longitude}, ...]}}}
 
-STATUS: this module has been tested with MOCKED responses only. It has NOT been run against the live service with a valid key,
-so no claim is made that the real integration works until that has been done.
+STATUS (checked 2026-10-30)
+  * VERIFIED against the live service with a valid key: single-point requests for 20 points in the Bengaluru area (16 on main roads, 4 at the edge
+    of the map scope) all returned a valid segment; the response has no measurement timestamp; its Cache-Control is "public, max-age=0".
+  * RECORDED real error responses (the shapes the tests use): a point with no road near it gives HTTP 400 {"error": "Point too far from nearest
+    existing segment.", "httpStatusCode": 400, "detailedError": {"code": "INVALID_REQUEST", ...}}; a wrong or missing key gives HTTP 401
+    {"detailedError": {"code": "Unauthorized", "message": "You are missing valid authentication credentials"}}; a malformed or missing point gives
+    another HTTP 400 ("Invalid point format." / "Missing point parameter."); an unknown service version gives HTTP 404 (a different JSON shape).
+  * DOCUMENTED but NEVER OBSERVED here: HTTP 403 ("The supplied API Key is not valid for this request."), HTTP 429 ("Too many requests were sent in
+    a given amount of time for the supplied API Key."), 500, 503 and 596 ("Unknown version of the service."). What a 403 body says, and whether an
+    exhausted quota answers 403 or 429, is unknown. TomTom's binding developer terms could not be read (README, "TomTom terms").
+  * Anything that is not one of the above is treated neutrally; no cause is ever stated that was not documented or observed.
 
 Rules built in
   * The key is read by the caller (environment / local secrets) and used server-side only. It is never put in a message,
@@ -41,6 +50,8 @@ RUN_BUDGET_DEFAULT = 300        # provider requests per application run (free ti
 RATE_LIMIT_COOLDOWN_S = 60      # after an HTTP 429, no provider request is sent for this long
 MAX_CACHE_ENTRIES = 200         # bound on the in-memory cache
 MAX_SEGMENT_OFFSET_KM = 5.0    # the returned segment must lie near the point that was asked for
+FAR_SEGMENT_NOTE_M = 150       # above this distance the page says the reading is for the nearest road, not for the exact point
+_NO_SEGMENT_TEXT = "point too far from nearest existing segment"   # TomTom's own words for a point with no road near it (recorded 2026-10-30)
 
 # Display bands: this application's convention, based on current speed as a share of free-flow speed.
 # They are NOT provider categories and are NOT validated against the dataset's Congestion Level.
@@ -98,6 +109,22 @@ def band(obs: FlowObservation, now=None) -> str:
     return "free" if r >= FREE_MIN_RATIO else "slow" if r >= SLOW_MIN_RATIO else "congested"
 
 
+def nearest_segment_distance_m(obs) -> float:
+    """Distance in metres from the requested point to the nearest part of the returned road segment (a polyline, flat-earth approximation:
+    exact enough at this scale). TomTom answers for the NEAREST road, so this tells how far the reading's road is from the chosen point."""
+    k = 111_320.0                                   # metres per degree of latitude
+    kx = k * math.cos(math.radians(obs.lat))        # metres per degree of longitude here
+    pts = [((lo - obs.lon) * kx, (la - obs.lat) * k) for la, lo in obs.segment]
+    best = min(math.hypot(x, y) for x, y in pts)
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        dx, dy = x2 - x1, y2 - y1
+        n = dx * dx + dy * dy
+        if n > 0:
+            t = max(0.0, min(1.0, -(x1 * dx + y1 * dy) / n))
+            best = min(best, math.hypot(x1 + t * dx, y1 + t * dy))
+    return best
+
+
 def _number(seg, name, lo, hi):
     v = seg.get(name)
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not lo <= v <= hi:
@@ -143,9 +170,11 @@ def parse_response(payload, lat: float, lon: float, fetched_at: float) -> FlowOb
                            segment=tuple(segment), fetched_at=fetched_at)
 
 
-# WHAT IS VERIFIED about refused keys: a real, deliberately invalid key gets HTTP 401 (checked against the live service). HOW TomTom words an
-# HTTP 403 (no access to the Traffic API, quota, or something else) has NEVER been observed, and TomTom's terms and quotas are unread (README:
-# "Verification status" and "TomTom terms"). The three word lists below are therefore GUESSES, not TomTom's documented wording. They are used
+# WHAT IS VERIFIED about refused keys: a real wrong or missing key gets HTTP 401 with {"detailedError": {"code": "Unauthorized", "message": "You are
+# missing valid authentication credentials"}} (recorded from the live service). TomTom's documentation says only that an HTTP 403 means "The supplied
+# API Key is not valid for this request." HOW a real 403 body is worded (no access to the Traffic API, quota, or something else) has NEVER been
+# observed, and TomTom's terms and quotas are unread (README: "Verification status" and "TomTom terms"). The three word lists below are therefore
+# GUESSES, not TomTom's documented wording. They are used
 # only to choose between messages that say what the answer SUGGESTS and what to check; when no list matches, the neutral message is used, which
 # names the possible causes and says TomTom did not say which. The body is used only to choose a message: it is never shown or logged, and the
 # key is removed from it first. Replace the guesses with TomTom's real wording once a real 403 has been seen; do not add new messages before that.
@@ -172,8 +201,9 @@ def _denied(status, resp, key) -> ProviderError:
     """HTTP 401/403. 401 is the verified "key not accepted" answer. For a 403 the body is only a hint (see the note above): the message says what
     the answer SUGGESTS, and the neutral message is used when the hint is not recognised."""
     text = _body_text(resp, key)
-    if status == 401:
-        return _err("auth", "TomTom rejected the request: the key was not accepted (it is invalid or has expired). Check that you copied it completely.")
+    if status == 401:   # observed: wrong or missing key -> "You are missing valid authentication credentials"
+        return _err("auth", "TomTom rejected the request (HTTP 401): it says the request is \"missing valid authentication credentials\". The key is wrong, "
+                            "incomplete or no longer valid: check that you copied it completely.")
     if any(w in text for w in _QUOTA_WORDS):
         return _err("quota", "TomTom rejected the request (HTTP 403) and its answer suggests the key's request quota may be used up. Check your usage and plan "
                              "in your TomTom account; TomTom's wording for this case has not been verified here.")
@@ -182,7 +212,8 @@ def _denied(status, resp, key) -> ProviderError:
                                  "enable the Traffic API for this key in your TomTom developer account; TomTom's wording for this case has not been verified here.")
     if any(w in text for w in _INVALID_WORDS):
         return _err("auth", "TomTom rejected the request (HTTP 403) and its answer suggests the key is invalid or has expired. Check that you copied it completely.")
-    return _err("auth", "TomTom rejected the request (HTTP 403): the key may be invalid, expired, not enabled for the Traffic API, or over its quota. "
+    return _err("auth", "TomTom rejected the request (HTTP 403). TomTom's documentation describes a 403 as \"The supplied API Key is not valid for this request.\" "
+                        "Possible reasons: the key may be invalid, expired, not enabled for the Traffic API, or over its quota. "
                         "TomTom's answer did not say which; check the key in your TomTom developer account.")
 
 
@@ -204,10 +235,13 @@ def fetch_flow(lat, lon, api_key, *, http_get=None, clock=time.time) -> FlowObse
         raise _denied(status, resp, api_key.strip())
     if status == 429:
         raise _err("rate_limited", "TomTom is limiting requests. Please wait before trying again.")
-    if status in (400, 404):
+    if status == 400 and _NO_SEGMENT_TEXT in _body_text(resp, api_key.strip()):   # recorded: a point with no road near it
         raise _err("no_segment", "TomTom has no traffic segment near this location. Try a point on a main road.")
-    if status != 200:
+    if status >= 500 and status != 596:   # 500 and 503 are documented; 596 is documented as "Unknown version of the service"
         raise _err("server", f"TomTom is temporarily unavailable (HTTP {status}). Please try again later.")
+    if status != 200:   # any other 400, 404 (recorded for an unknown service version), 405, 596, ...: not a case this application understands
+        raise _err("unexpected_status", f"TomTom answered with HTTP {status}, which this application does not recognise as a traffic reading or as a known "
+                                        "error, so nothing was shown. This should not happen for a place chosen on the map.")
     try:
         payload = resp.json()
     except ValueError:

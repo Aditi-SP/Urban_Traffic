@@ -52,7 +52,7 @@ def file_stamp(*paths):
     return tuple(os.path.getmtime(p) if os.path.exists(p) else None for p in paths)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner="Loading and checking the historical dataset...")   # shown only when it is really being loaded, not when it is cached
 def _load_dataset_cached(stamp):
     try:
         df = fd.load_raw()
@@ -71,7 +71,7 @@ def get_data():
     return dataset_status()[0]
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner="Preparing the train / validation / test split...")
 def split_table_cached(stamp):
     meta, _, _, _ = fd.load_dataset()
     return meta.groupby("split")["Target Date"].agg(["count", "min", "max"]).reindex(["train", "val", "test"])
@@ -245,7 +245,7 @@ def ensure_ready(need_models=True):
     """Load models/dataset state for a page and show the ONE setup banner. Returns (xgboost_booster_or_None, lstm_ready)."""
     xgb_model, lstm_ready, problems = None, False, []
     if need_models:
-        with st.spinner("Loading models..."):
+        with st.spinner("Loading the trained models (the first time can take 10 to 20 seconds)..."):
             xgb_model, lstm_ready, problems = load_models()
     _, data_error = dataset_status()
     render_setup_banner(data_error, problems)

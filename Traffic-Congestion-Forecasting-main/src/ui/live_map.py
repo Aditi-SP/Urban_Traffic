@@ -25,7 +25,7 @@ from src.ui.common import METRICS_JSON, get_data, read_json
 
 LAYERS = ["Traffic segment", "Selected place"]
 MAP_HEIGHT = 500
-SEVERITY = {"no_key": "error", "auth": "error", "forbidden": "error", "quota": "warning", "invalid_response": "error", "no_segment": "info",
+SEVERITY = {"no_key": "error", "auth": "error", "forbidden": "error", "quota": "warning", "invalid_response": "error", "unexpected_status": "error", "no_segment": "info",
             "timeout": "warning", "network": "warning", "server": "warning", "rate_limited": "warning", "budget": "warning", "throttled": "info"}
 BAND_TEXT = {"free": ("Free-flowing", "ok", theme.GREEN), "slow": ("Slow", "warn", theme.AMBER),
              "congested": ("Congested", "bad", theme.RED), "closed": ("Road closed", "bad", theme.RED),
@@ -151,7 +151,8 @@ def _controls():
                             placeholder="Search a road, junction or place in Bengaluru, then press Search", max_chars=geo.MAX_QUERY_LEN)
         submitted = b.form_submit_button("Search", use_container_width=True)
     if submitted:
-        _search(text)
+        with st.spinner("Searching OpenStreetMap..."):
+            _search(text)
         results = S.get("lm_results") or []
 
     r1, r2 = st.columns([5, 3])
@@ -201,6 +202,11 @@ def _panel(has_key, sel, obs, now):
                 else "Add a TomTom key to request traffic for a place.")
         theme_cards.append(_card("Traffic reading", "None", "No reading yet. " + note, "mute"))
     st.markdown("<div style='display:flex;flex-direction:column;gap:.6rem'>" + "".join(theme_cards) + "</div>", unsafe_allow_html=True)
+    if obs is not None:
+        off = tomtom.nearest_segment_distance_m(obs)
+        if off > tomtom.FAR_SEGMENT_NOTE_M:   # TomTom answers for the NEAREST road: say so when that road is not at the chosen point
+            st.caption(f"TomTom answered for the nearest road, about {off:,.0f} m from the point you chose. The segment drawn on the map is the one "
+                       "this reading describes; it may not be the road you meant.")
     st.write("")
     st.button("Refresh traffic" if obs is not None else "Get traffic for this place", key="lm_fetch_btn", type="primary",
               disabled=not (has_key and sel), on_click=_request_fetch, use_container_width=True)

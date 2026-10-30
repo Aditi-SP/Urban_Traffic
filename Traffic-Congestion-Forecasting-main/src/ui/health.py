@@ -43,6 +43,7 @@ _ERROR_TEXT = {
     "server": ("warn", "TomTom reported a temporary problem"),
     "invalid_response": ("bad", "TomTom sent a response this application could not accept"),
     "no_segment": ("warn", "TomTom has no traffic segment near the last point that was tried"),
+    "unexpected_status": ("bad", "TomTom answered with a status this application does not recognise (nothing was shown)"),
 }
 
 

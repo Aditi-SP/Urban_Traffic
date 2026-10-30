@@ -28,7 +28,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from src.app import realtime  # noqa: E402
 from src.live import geo, tomtom  # noqa: E402
 from src.ui import common  # noqa: E402
-from tests.test_live_map import KEY, FakeResp, PageHarness, flow_payload, snapshot  # noqa: E402
+from tests.test_live_map import REC_NO_ROAD, KEY, FakeResp, PageHarness, flow_payload, snapshot  # noqa: E402
 
 FORECASTS = str(root_dir / "src" / "ui" / "pages" / "forecasts.py")
 PERFORMANCE = str(root_dir / "src" / "ui" / "pages" / "performance.py")
@@ -269,7 +269,7 @@ class Mode2RoutingTests(unittest.TestCase):
     def test_provider_failures_are_explained_without_a_crash_a_reading_or_the_key(self):
         cases = [(requests.Timeout("slow"), "did not answer in time"), (requests.ConnectionError(f"boom key={KEY}"), "Could not reach TomTom"),
                  (FakeResp(401, {}), "rejected the request"), (FakeResp(403, {}), "rejected the request"),
-                 (FakeResp(429, {}), "limiting requests"), (FakeResp(400, {}), "no traffic segment"),
+                 (FakeResp(429, {}), "limiting requests"), (FakeResp(400, REC_NO_ROAD), "no traffic segment"),
                  (FakeResp(503, {}), "temporarily unavailable"), (FakeResp(200, {"unexpected": 1}), "rejected"),
                  (FakeResp(200, json_error=True), "could not be read"),
                  (FakeResp(200, flow_payload(currentSpeed="fast")), "invalid 'currentSpeed'")]

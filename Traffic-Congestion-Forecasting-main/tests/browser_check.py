@@ -281,7 +281,25 @@ async def main():
         ok_models = await c.wait_text("Both trained models loaded.", 180)
         check("Diagnostics: 'Check models load' really loads the trained models and says so", ok_models)
         await c.click_by_text("button", "Run preflight", exact=True)
-        ok_pre = await c.wait_text("Preflight:", 120)
+        # while the preflight runs (about 2 s) the sidebar must say that the status under it is still the previous one, and a spinner must say what is running
+        saw_updating = saw_spinner = False
+        t_end = time.time() + 120
+        while time.time() < t_end:
+            side_now = await c.js(SIDEBAR_JS) or ""
+            saw_updating = saw_updating or "Updating... the status below is from the previous action." in side_now
+            saw_spinner = saw_spinner or "Running the preflight checks..." in (await c.text() or "")
+            if "Preflight:" in side_now:
+                break
+            await asyncio.sleep(0.04)
+        ok_pre = "Preflight:" in (await c.text() or "")
+        await c.settle()
+        # The spinner is informational here: Streamlit shows st.spinner only for an operation that lasts longer than about half a second, so a fast, warm
+        # preflight may legitimately never show it (the spinner texts themselves are asserted in the unit tests, which record the real calls).
+        check("loading state: while the preflight runs the sidebar says its status is from the previous action",
+              saw_updating, f"'Updating' line seen: {saw_updating}; spinner seen: {saw_spinner} (shown only after about 0.5 s)")
+        idle_side = await c.js(SIDEBAR_JS) or ""
+        check("loading state: when the run has finished the 'Updating' line is gone and the status is complete again",
+              "Updating..." not in idle_side and "Checking..." not in idle_side and "System status" in idle_side and "Data: historical" in idle_side)
         tp = await c.text()
         line = next((l for l in tp.splitlines() if l.startswith("Preflight:")), "")
         check("Diagnostics: 'Run preflight' runs the real preflight and reports its result (no FAIL)", ok_pre and "FAIL" not in line, line[:160])

@@ -29,19 +29,22 @@ def chips_html(items):
 # then handled at the start of the run, and the open panel survives a rerun). Only the status TEXT (the chips and the provider/data/model/report
 # lines in Diagnostics) is filled in AFTER the page has run, into containers reserved here. A page can fetch live traffic while it runs, and the
 # status must show the result of THAT fetch; drawn first, it lagged one interaction behind (D4). A container keeps what it showed until the new
-# text replaces it, so while a page is still running the previous status stays on screen (Streamlit greys it as out of date); the first run of a
-# session shows a short "checking" line instead. The final draw is in a finally so it also happens when a page stops early (st.stop) or fails.
+# text replaces it, so while a page is still running the previous status stays on screen (Streamlit greys it as out of date) under a line that says
+# so ("Updating..."); the first run of a session shows "Checking..." instead. The final draw, which also clears that line, is in a finally so it
+# happens when a page stops early (st.stop) or fails.
 with st.sidebar:
     st.markdown('<div class="tc-section"><h2>System status</h2></div>', unsafe_allow_html=True)
     chips_slot = st.container()
     with chips_slot:
         checking = st.empty()
+        # Shown from the very start of the run, so it is also visible while the Diagnostics buttons below or the page itself are busy; a run that
+        # finishes at once never lets it be seen. It says that the chips under it are the PREVIOUS status until this run has finished, so a status
+        # from before the latest action is never mistaken for the current one. The first run of a session has no previous status.
+        checking.caption("Updating... the status below is from the previous action." if "tc_status_drawn" in st.session_state else "Checking...")
     st.write("")
     with st.expander("Diagnostics (files, models, data)"):
         status_slot = st.container()
         diagnostics.render_tools()
-if "tc_status_drawn" not in st.session_state:
-    checking.caption("Checking…")
 try:
     page.run()
 finally:

@@ -28,7 +28,7 @@ from src.live import credentials, geo, tomtom  # noqa: E402
 TEST_POINT = (12.9159, 77.6240)  # Silk Board Junction area: a main road inside the Bengaluru area
 LABELS = {"auth": "KEY NOT ACCEPTED", "forbidden": "KEY MAY NOT BE ENABLED FOR THE TRAFFIC FLOW API", "quota": "QUOTA MAY BE USED UP", "rate_limited": "RATE LIMITED",
           "timeout": "TIMEOUT", "network": "NO CONNECTION", "server": "TOMTOM PROBLEM", "no_segment": "NO TRAFFIC DATA NEAR THE POINT",
-          "invalid_response": "UNREADABLE ANSWER", "no_key": "NOT CONFIGURED"}
+          "invalid_response": "UNREADABLE ANSWER", "unexpected_status": "UNEXPECTED ANSWER", "no_key": "NOT CONFIGURED"}
 
 
 def main(argv=None, *, http_get=None, out=None) -> int:

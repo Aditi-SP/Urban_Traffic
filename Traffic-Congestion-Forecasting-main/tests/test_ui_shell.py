@@ -250,6 +250,15 @@ class DataPagesTests(unittest.TestCase):
                        "2024-03-21 to 2024-08-09", "Historical replay and what-if forecasts"):
             self.assertIn(needle, text)
 
+    def test_a_prediction_shows_that_the_models_are_running(self):
+        from tests.test_live_map import RecordedUi
+        with RecordedUi() as ui:
+            at = open_page("Traffic Forecasts")
+            at.button(key="demo_predict").click().run()
+        self.assertEqual([e.value for e in at.exception], [])
+        self.assertIn("Running the LSTM, XGBoost and baseline predictions...", ui.spinners)
+        self.assertTrue(any(s.startswith("Loading the trained models") for s in ui.spinners))
+
     def test_existing_prediction_flow_still_works_from_the_new_page(self):
         at = open_page("Traffic Forecasts")
         at.button(key="demo_predict").click().run()

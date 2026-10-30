@@ -30,7 +30,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from src import preflight  # noqa: E402
 from src.live import check_key, credentials, geo, tomtom  # noqa: E402
 from src.ui import common, health, live_map  # noqa: E402
-from tests.test_live_map import KEY, FakeResp, PageHarness, flow_payload  # noqa: E402
+from tests.test_live_map import CONSTRUCTED_404, REC_BAD_KEY, REC_BAD_POINT, REC_NO_POINT, REC_NO_ROAD, KEY, FakeResp, PageHarness, flow_payload  # noqa: E402
 
 LAUNCHER = root_dir / "run_dashboard.ps1"
 NOTHING_SAVED = (None, None)
@@ -296,6 +296,18 @@ class WiringTests(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn(KEY, text)
 
+    def test_the_two_diagnostics_buttons_show_what_they_are_doing(self):
+        from tests.test_live_map import RecordedUi
+        src = f"import sys\nsys.path.insert(0, {str(root_dir)!r})\nfrom src.ui import diagnostics\ndiagnostics.render_tools()\n"
+        with mock.patch.dict(os.environ, {"TOMTOM_API_KEY": KEY}), mock.patch.object(common, "load_models", return_value=(None, False, [])), \
+                mock.patch.object(preflight, "run_checks", return_value=[]), RecordedUi() as ui:
+            at = AppTest.from_string(src, default_timeout=120).run()
+            at.button(key="diag_models").click().run()
+            at.button(key="diag_preflight").click().run()
+        self.assertIn("Loading the trained models (the first time can take 10 to 20 seconds)...", ui.spinners)
+        self.assertIn("Running the preflight checks...", ui.spinners)
+        self.assertEqual([e.value for e in at.exception], [])
+
     def test_diagnostics_show_the_exact_process_start_time_not_a_later_one(self):
         src = f"import sys\nsys.path.insert(0, {str(root_dir)!r})\nfrom src.ui import diagnostics\ndiagnostics.render()\n"
         with mock.patch.dict(os.environ, {"TOMTOM_API_KEY": KEY}), mock.patch.object(tomtom, "SERVICE", tomtom.FlowService()):
@@ -339,7 +351,8 @@ class ProviderErrorClassificationTests(unittest.TestCase):
 
     def test_every_failure_has_its_own_kind_and_a_message_that_says_what_to_do(self):
         cases = [
-            (FakeResp(401, {}), "auth", "was not accepted"),
+            (FakeResp(401, REC_BAD_KEY), "auth", "missing valid authentication credentials"),   # RECORDED from the live service
+            (FakeResp(401, {}), "auth", "HTTP 401"),
             (FakeResp(403, {"error": "Forbidden", "detailedError": {"code": "x", "message": "Invalid key"}}), "auth", "answer suggests the key is invalid or has expired"),
             (FakeResp(403, {"detailedError": {"message": "API key not authorized for this product"}}), "forbidden", "enable the Traffic API"),
             (FakeResp(403, {"error": "Not enabled"}), "forbidden", "answer suggests this key may not be enabled for the Traffic Flow API"),
@@ -349,8 +362,12 @@ class ProviderErrorClassificationTests(unittest.TestCase):
             (FakeResp(403, {"weird": "shape"}), "auth", "did not say which"),
             (FakeResp(403, []), "auth", "did not say which"),
             (FakeResp(429, {}), "rate_limited", "limiting requests"),
-            (FakeResp(400, {}), "no_segment", "no traffic segment"),
-            (FakeResp(404, {}), "no_segment", "no traffic segment"),
+            (FakeResp(400, REC_NO_ROAD), "no_segment", "no traffic segment"),                  # RECORDED: a point with no road near it
+            (FakeResp(400, REC_BAD_POINT), "unexpected_status", "HTTP 400"),                    # RECORDED: other 400s are not "no segment"
+            (FakeResp(400, REC_NO_POINT), "unexpected_status", "does not recognise"),
+            (FakeResp(400, {}), "unexpected_status", "HTTP 400"),
+            (FakeResp(404, CONSTRUCTED_404), "unexpected_status", "HTTP 404"),                  # RECORDED for an unknown service version (values constructed)
+            (FakeResp(596, {}), "unexpected_status", "HTTP 596"),                               # documented as "Unknown version of the service"
             (FakeResp(500, {}), "server", "temporarily unavailable"),
             (FakeResp(503, {}), "server", "temporarily unavailable"),
             (FakeResp(200, json_error=True), "invalid_response", "could not be read"),
@@ -360,6 +377,22 @@ class ProviderErrorClassificationTests(unittest.TestCase):
                 e = self.expect(resp)
                 self.assertEqual(e.kind, kind)
                 self.assertIn(fragment, e.message)
+
+    def test_the_documented_403_meaning_is_quoted_and_no_unobserved_cause_is_added_as_fact(self):
+        """TomTom's documentation (docs.tomtom.com, Flow Segment Data, checked 2026-10-30) describes a 403 as 'The supplied API Key is not valid for this
+        request.' That sentence is quoted; the possible reasons that follow it are only possibilities, and the answer is said not to say which."""
+        msg = self.expect(FakeResp(403, {})).message
+        self.assertIn("The supplied API Key is not valid for this request.", msg)
+        self.assertIn("Possible reasons", msg)
+        self.assertIn("did not say which", msg)
+        self.assertNotIn("suggests", msg)
+
+    def test_an_observed_401_says_what_tomtom_said_and_adds_no_cause(self):
+        msg = self.expect(FakeResp(401, REC_BAD_KEY)).message
+        self.assertIn("HTTP 401", msg)
+        self.assertIn("missing valid authentication credentials", msg)
+        self.assertNotIn("expired", msg)          # 'expired' was never observed for a 401
+        self.assertNotIn("quota", msg)
 
     def test_a_403_cause_is_never_stated_as_fact_and_the_unverified_wording_is_admitted(self):
         """The wording of a real HTTP 403 has never been observed, so a cause taken from its body is only ever a suggestion; an unrecognised
@@ -394,7 +427,7 @@ class ProviderErrorClassificationTests(unittest.TestCase):
         kinds = {self.expect(FakeResp(*a)).kind for a in ((401, {}), (403, {"error": "not enabled"}), (403, {"error": "over the limit"}), (429, {}))}
         self.assertEqual(kinds, {"auth", "forbidden", "quota", "rate_limited"})
         self.assertEqual(self.expect(exc=requests.ConnectionError("x")).kind, "network")
-        self.assertEqual(self.expect(FakeResp(404, {})).kind, "no_segment")
+        self.assertEqual(self.expect(FakeResp(400, REC_NO_ROAD)).kind, "no_segment")
 
     def test_the_key_never_appears_even_when_the_provider_echoes_it(self):
         echoes = [FakeResp(403, {"error": f"Invalid key {KEY}", "detailedError": {"message": f"key={KEY} not authorized"}}),
@@ -419,8 +452,9 @@ class ProviderErrorClassificationTests(unittest.TestCase):
 
     def test_the_live_page_shows_each_failure_and_never_a_reading(self):
         cases = [(FakeResp(403, {"error": "not enabled for this product"}), "may not be enabled for the Traffic Flow API"),
-                 (FakeResp(403, {"error": "over the limit"}), "quota may be used up"), (FakeResp(401, {}), "was not accepted"),
-                 (requests.ConnectionError(f"x key={KEY}"), "Could not reach TomTom"), (FakeResp(404, {}), "no traffic segment")]
+                 (FakeResp(403, {"error": "over the limit"}), "quota may be used up"), (FakeResp(401, REC_BAD_KEY), "missing valid authentication credentials"),
+                 (requests.ConnectionError(f"x key={KEY}"), "Could not reach TomTom"), (FakeResp(400, REC_NO_ROAD), "no traffic segment"),
+                 (FakeResp(404, CONSTRUCTED_404), "does not recognise")]
         for outcome, expected in cases:
             with self.subTest(expected):
                 h = PageHarness(key=KEY, tomtom_outcome=outcome).start()
@@ -476,7 +510,8 @@ class CheckKeyTests(unittest.TestCase):
     def test_every_failure_is_labelled_and_exits_2(self):
         cases = [(FakeResp(401, {}), "KEY NOT ACCEPTED"), (FakeResp(403, {"error": "not enabled"}), "KEY MAY NOT BE ENABLED FOR THE TRAFFIC FLOW API"),
                  (FakeResp(403, {"error": "over the limit"}), "QUOTA MAY BE USED UP"), (FakeResp(429, {}), "RATE LIMITED"),
-                 (FakeResp(503, {}), "TOMTOM PROBLEM"), (FakeResp(404, {}), "NO TRAFFIC DATA NEAR THE POINT"), (FakeResp(200, json_error=True), "UNREADABLE ANSWER")]
+                 (FakeResp(503, {}), "TOMTOM PROBLEM"), (FakeResp(400, REC_NO_ROAD), "NO TRAFFIC DATA NEAR THE POINT"), (FakeResp(404, CONSTRUCTED_404), "UNEXPECTED ANSWER"),
+                 (FakeResp(200, json_error=True), "UNREADABLE ANSWER")]
         for resp, label in cases:
             with self.subTest(label):
                 code, text = self.run_cli(["--request"], {"TOMTOM_API_KEY": KEY}, mock.Mock(return_value=resp))

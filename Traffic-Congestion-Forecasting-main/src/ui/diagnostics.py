@@ -57,12 +57,15 @@ def render_tools():
                     + ("present" if present else ("MISSING" if required else "not present (optional)")))
     c1, c2 = st.columns(2)
     if c1.button("Check models load", key="diag_models", use_container_width=True):
-        _, lstm_ready, problems = common.load_models()
+        with st.spinner("Loading the trained models (the first time can take 10 to 20 seconds)..."):
+            _, lstm_ready, problems = common.load_models()
         st.session_state["diag_models_result"] = problems or ["Both trained models loaded." if lstm_ready else "No problem reported."]
         st.session_state["diag_models_ok"] = not problems
     if c2.button("Run preflight", key="diag_preflight", use_container_width=True):
         from src import preflight
-        bad = [c for c in preflight.run_checks(fast=True) if c.status in ("FAIL", "WARN")]
+        with st.spinner("Running the preflight checks..."):
+            checks = preflight.run_checks(fast=True)
+        bad = [c for c in checks if c.status in ("FAIL", "WARN")]
         st.session_state["diag_preflight_result"] = [f"{c.status}: {c.name}" + (f" ({health._safe(c.detail, common.PROJECT_ROOT)})" if c.detail else "") for c in bad] or ["All required checks passed."]
         st.session_state["diag_preflight_ok"] = not any(c.status == "FAIL" for c in bad)
     for key, title in (("diag_models", "Models"), ("diag_preflight", "Preflight")):

@@ -117,7 +117,8 @@ def render_demo_replay(ctx, xgb_model):
         used = demo.apply_scenario(hist, overrides) if overrides else hist
         label = "What-if scenario" if overrides else "Historical replay"
         try:
-            res = demo.predict_all(used, ctx)
+            with st.spinner("Running the LSTM, XGBoost and baseline predictions..."):
+                res = demo.predict_all(used, ctx)
         except (demo.DemoInputError, artifacts.ArtifactError, fd.DatasetError) as e:
             st.error(f"Cannot predict: {e}")
         else:

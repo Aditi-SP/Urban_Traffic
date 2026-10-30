@@ -13,4 +13,4 @@ streamlit==1.40.2
 pyarrow==20.0.0         # 26.x requires NumPy 2
 plotly==7.1.0
 matplotlib==3.9.4       # training / comparison scripts (plots)
-requests==2.31.0        # real-time provider interface (unverified against the live service)
+requests==2.31.0        # TomTom Flow Segment Data and Nominatim clients (src/live)
