@@ -81,3 +81,17 @@ local-settings.json
 audit_backup/
 original_backup/
 backup_before_final_corrections/
+# Community reports: local anonymous report database (never commit)
+data/community/
+
+# Raw dataset: stays local (see README, "Dataset"); the saved model outputs under model/ and reports/ are not affected
+data/raw/
+
+# Output of tests/browser_check.py: screenshots and the throw-away Chrome profile it creates inside the folder you pass it.
+# Images are NOT ignored in general: the figures under model/ and reports/ are tracked.
+shots/
+screenshots/
+**/chrome_profile/
+
+# Tool caches
+.pytest_cache/
