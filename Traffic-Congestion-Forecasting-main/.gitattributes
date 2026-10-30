@@ -1,0 +1,4 @@
+# Vendored third-party files are verified against the published SRI hashes (src/ui/leaflet_map.py), so their bytes must never be
+# converted. Without this, core.autocrlf (the Windows default) rewrites leaflet.js to CRLF on checkout and the map refuses to load,
+# and the CSS (CRLF upstream) had been stored with LF.
+src/ui/vendor/leaflet/* -text
