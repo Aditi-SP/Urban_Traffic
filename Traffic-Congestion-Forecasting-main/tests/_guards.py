@@ -2,8 +2,12 @@
 Skip guards shared by the test modules: tests that need the dataset or the trained files SKIP (with a clear reason)
 instead of erroring when those files are absent (the dataset is git-ignored, so a fresh clone does not contain it).
 """
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _isolation  # noqa: E402,F401  (COMMUNITY_DB_PATH -> a temporary database: tests never touch the real community.db)
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_FILE = ROOT / "data" / "raw" / "Banglore_traffic_Dataset.csv"

@@ -47,6 +47,43 @@ Set-Location $project
 $env:TF_CPP_MIN_LOG_LEVEL = '2'   # hides TensorFlow INFO logs only; numerical results are unchanged
 $env:PYTHONUTF8 = '1'
 
+# --- settings saved for your Windows user ---
+# Windows copies environment variables into a process when it STARTS. A terminal that was opened before a variable was saved
+# (for example a terminal inside VS Code, or another PowerShell window) does not have it, so the dashboard would start without your
+# TomTom key or without LIVE_CACHE_TTL_S. This loads the SAVED user/machine value into this launcher (and so the dashboard) whenever the
+# current terminal has none. A value already present in this terminal always wins. Values are never printed.
+function Import-MissingEnvironment {
+    param(
+        [string[]]$Names,
+        [scriptblock]$Getter = { param($n, $s) [Environment]::GetEnvironmentVariable($n, $s) }
+    )
+    foreach ($n in $Names) {
+        if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($n, 'Process'))) { continue }
+        foreach ($scope in 'User', 'Machine') {
+            $v = & $Getter $n $scope
+            if (-not [string]::IsNullOrWhiteSpace($v)) {
+                [Environment]::SetEnvironmentVariable($n, $v, 'Process')
+                [pscustomobject]@{ Name = $n; Scope = $scope }
+                break
+            }
+        }
+    }
+}
+foreach ($l in @(Import-MissingEnvironment -Names 'TOMTOM_API_KEY', 'LIVE_CACHE_TTL_S', 'LIVE_MAX_REQUESTS')) {
+    if ($l.Name -eq 'TOMTOM_API_KEY') {
+        Write-Host "TomTom key: loaded from your Windows $($l.Scope.ToLower()) environment (this terminal did not have it; value not shown)." -ForegroundColor Cyan
+    } else {
+        Write-Host "$($l.Name) = $([Environment]::GetEnvironmentVariable($l.Name, 'Process')) (loaded from your Windows $($l.Scope.ToLower()) environment)." -ForegroundColor Cyan
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($env:TOMTOM_API_KEY)) {
+    Write-Host 'TomTom key: found in the environment (value not shown).' -ForegroundColor Green
+} elseif (Test-Path (Join-Path $project '.streamlit\secrets.toml')) {
+    Write-Host 'TomTom key: no environment variable; using .streamlit\secrets.toml if it is valid (checked when the dashboard starts).' -ForegroundColor Green
+} else {
+    Write-Host 'TomTom key: NOT found. The map and place search work, but there will be no live traffic. See README: Setting up TOMTOM_API_KEY.' -ForegroundColor Yellow
+}
+
 # --- preflight ---
 if (-not $SkipPreflight -or $CheckOnly) {
     Write-Host 'Running preflight check...' -ForegroundColor Cyan
@@ -73,7 +110,11 @@ function Test-PortFree([int]$p) {
 }
 $chosen = $Port
 while (-not (Test-PortFree $chosen) -and $chosen -lt ($Port + 20)) { $chosen++ }
-if ($chosen -ne $Port) { Write-Host "Port $Port is busy; using $chosen instead." -ForegroundColor Yellow }
+if ($chosen -ne $Port) {
+    Write-Host "Port $Port is busy; using $chosen instead." -ForegroundColor Yellow
+    Write-Host "Another dashboard may already be running on port $Port (started before your settings changed). Open http://localhost:$chosen for THIS one," -ForegroundColor Yellow
+    Write-Host "or stop the old one first (README: Restart the dashboard)." -ForegroundColor Yellow
+}
 
 $streamlitArgs = @('-m', 'streamlit', 'run', 'app.py', '--server.port', "$chosen", '--browser.gatherUsageStats', 'false')
 if ($NoBrowser) { $streamlitArgs += @('--server.headless', 'true') }

@@ -275,17 +275,13 @@ def _spark_checks(root: Path) -> list:
 
 
 def _tomtom_checks(root: Path) -> list:
-    key = bool(os.environ.get("TOMTOM_API_KEY"))
-    secrets = root / ".streamlit" / "secrets.toml"
-    if not key and secrets.is_file():
-        try:
-            import tomllib
-            key = bool(tomllib.loads(secrets.read_text(encoding="utf-8")).get("TOMTOM_API_KEY"))
-        except Exception:
-            key = False
-    if key:
-        return [Check(G_TOMTOM, "TomTom API key", "OK", "configured (value not shown). NOT verified against the live service, and the API cannot supply the models' inputs.")]
-    return [Check(G_TOMTOM, "TomTom API key", "OPT", "not configured", "Optional. Mode 2 shows a configuration message; Mode 1 (historical replay / what-if) is unaffected.")]
+    from src.live import credentials  # the same rules the dashboard uses; the value is never printed
+    cred = credentials.load(project_root=root)
+    if cred.configured:
+        return [Check(G_TOMTOM, "TomTom API key", "OK", f"configured via the {cred.source} (value not shown). NOT verified against the live service: "
+                                                          "run  python -m src.live.check_key --request  to test it once.")]
+    return [Check(G_TOMTOM, "TomTom API key", "OPT", "not configured" + (": " + cred.hint_text() if cred.hint_text() else ""),
+                  "Optional: without a key the map and place search work but there is no live traffic. See the README, 'Setting up TOMTOM_API_KEY'.")]
 
 
 def run_checks(root=None, fast=False) -> list:

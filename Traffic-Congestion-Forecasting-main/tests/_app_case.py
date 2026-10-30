@@ -13,6 +13,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ.setdefault("COMMUNITY_DB_PATH", os.path.join(os.environ.get("TEMP", "."), "tc_failure_case_community.db"))  # never the real community.db
 root = sys.argv[1]
 os.chdir(root)
 sys.path.insert(0, root)

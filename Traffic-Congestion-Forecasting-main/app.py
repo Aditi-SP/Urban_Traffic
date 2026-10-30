@@ -7,13 +7,11 @@ This file only sets up the page, the theme and the navigation. Each of the five 
 page from src/ui/pages/. Everything the former single-page app offered is still here, under these sections:
     Traffic Forecasts                   historical replay / what-if forecasts, provider interface (formerly the Live Prediction Demo tab)
     Model Performance & Data Sources    overview, model results, data & wrangling, historical analysis, limitations (formerly five tabs)
-    Live Traffic Map, Community Reports, Road & Incident Details    new sections (Stage 0: shells and empty states only)
+    Live Traffic Map, Community Reports, Road & Incident Details    new sections (the details page shows the historical road profile only; no incidents)
 """
-import os
-
 import streamlit as st
 
-from src.ui import common, navigation, theme
+from src.ui import diagnostics, health, navigation, theme
 
 st.set_page_config(page_title="Traffic Intelligence Dashboard", page_icon=":material/traffic:", layout="wide",
                    initial_sidebar_state="expanded")
@@ -21,21 +19,36 @@ theme.inject_css()
 
 page = st.navigation(navigation.build_pages(st), position="sidebar")
 
-with st.sidebar:
-    live = ("Provider key found, not yet verified", "warn") if common.tomtom_key() else ("Live traffic: not configured", "bad")
-    st.markdown('<div class="tc-section"><h2>System status</h2></div>'
-                '<div class="tc-chips" style="flex-direction:column;align-items:flex-start;gap:.35rem">'
-                + theme.chip_html(*live)
-                + theme.chip_html("Data: historical, 2022-2024", "warn")
-                + theme.chip_html("Models: not validated for 2026", "warn") + "</div>", unsafe_allow_html=True)
-    st.write("")
-    with st.expander("Files / Status"):
-        st.write("XGBoost predictions:", os.path.exists(common.XGB_PRED_PATH))
-        st.write("LSTM predictions:", os.path.exists(common.LSTM_PRED_PATH))
-        st.write("Baseline predictions:", os.path.exists(common.BASELINE_PRED_PATH))
-        st.write("Training History CSV:", os.path.exists(common.XGB_TRAIN_HISTORY_CSV))
-        st.write("Dataset:", os.path.exists(common.fd.DATA_PATH))
-        st.write("Spark results (optional):", os.path.exists(os.path.join(common.SPARK_DIR, "summary.json")))
-        st.write("TomTom key (optional, unverified):", bool(common.tomtom_key()))
 
-page.run()
+def chips_html(items):
+    return ('<div class="tc-chips" style="flex-direction:column;align-items:flex-start;gap:.35rem">'
+            + "".join(theme.chip_html(i.chip, health.KIND[i.state]) for i in items) + "</div>")
+
+
+# The sidebar is laid out BEFORE the page runs, exactly as it always was: the heading, the Diagnostics panel and its buttons (a button click is
+# then handled at the start of the run, and the open panel survives a rerun). Only the status TEXT (the chips and the provider/data/model/report
+# lines in Diagnostics) is filled in AFTER the page has run, into containers reserved here. A page can fetch live traffic while it runs, and the
+# status must show the result of THAT fetch; drawn first, it lagged one interaction behind (D4). A container keeps what it showed until the new
+# text replaces it, so while a page is still running the previous status stays on screen (Streamlit greys it as out of date); the first run of a
+# session shows a short "checking" line instead. The final draw is in a finally so it also happens when a page stops early (st.stop) or fails.
+with st.sidebar:
+    st.markdown('<div class="tc-section"><h2>System status</h2></div>', unsafe_allow_html=True)
+    chips_slot = st.container()
+    with chips_slot:
+        checking = st.empty()
+    st.write("")
+    with st.expander("Diagnostics (files, models, data)"):
+        status_slot = st.container()
+        diagnostics.render_tools()
+if "tc_status_drawn" not in st.session_state:
+    checking.caption("Checking…")
+try:
+    page.run()
+finally:
+    items = health.collect()  # real checks, no network request; see src/ui/health.py
+    checking.empty()
+    with chips_slot:
+        st.markdown(chips_html(items), unsafe_allow_html=True)
+    with status_slot:
+        diagnostics.render_status(items)
+    st.session_state["tc_status_drawn"] = True

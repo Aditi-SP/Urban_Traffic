@@ -20,6 +20,8 @@ from unittest import mock
 
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _isolation  # noqa: E402,F401  (COMMUNITY_DB_PATH -> a temporary database: tests never touch the real community.db)
 os.environ.pop("LIVE_CACHE_TTL_S", None)  # tests must not depend on a local runtime setting; tests that need it set it themselves
 
 import requests  # noqa: E402
@@ -324,18 +326,17 @@ class TomTomClientTests(unittest.TestCase):
                 pass
         self.assertFalse([r for r in logs.records if KEY in r.getMessage()])
 
-    def test_existing_mode2_interface_no_longer_leaks_the_key(self):
-        """Regression: realtime.fetch_flow_segment used raise_for_status(), whose text contains the full URL with key=..."""
+    def test_a_provider_error_text_that_contains_the_key_never_leaves_the_shared_service(self):
+        """Regression for the removed stand-alone client, whose raise_for_status() text contained the full URL with key=...
+        The supported path (FlowService -> fetch_flow) must stay clean for the same failures."""
         from src.app import realtime
+        self.assertFalse(hasattr(realtime, "fetch_flow_segment"))
         leaky = f"401 Client Error: Unauthorized for url: https://api.tomtom.com/x?key={KEY}&point=1%2C2"
-        resp = mock.Mock()
-        resp.raise_for_status.side_effect = requests.HTTPError(leaky, response=mock.Mock(status_code=401))
-        for outcome in (resp, requests.ConnectionError(leaky)):
-            patch = mock.patch.object(realtime.requests, "get", side_effect=outcome) if isinstance(outcome, Exception) \
-                else mock.patch.object(realtime.requests, "get", return_value=outcome)
-            with patch, self.assertRaises(RuntimeError) as cm:
-                realtime.fetch_flow_segment(12.97, 77.59, KEY)
-            self.assertNotIn(KEY, str(cm.exception))
+        for outcome in (requests.HTTPError(leaky), requests.ConnectionError(leaky), requests.Timeout(leaky)):
+            with mock.patch.object(tomtom.requests, "get", side_effect=outcome), self.assertRaises(tomtom.ProviderError) as cm:
+                tomtom.FlowService().get(*PLACE, KEY)
+            for text in (str(cm.exception), cm.exception.message, repr(cm.exception)):
+                self.assertNotIn(KEY, text)
             self.assertIsNone(cm.exception.__cause__)
 
 
@@ -489,6 +490,15 @@ class LeafletTests(unittest.TestCase):
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 PAGE = str(root_dir / "src" / "ui" / "pages" / "live_map.py")
+APP = str(root_dir / "app.py")   # the real router (app.py runs unchanged and draws the sidebar)
+
+
+def _router_pages(st):
+    """AppTest does not run file-based st.Page pages under a router, so the only substitution is HOW the page is started: a callable that
+    executes the real live-map page script. app.py itself, the sidebar, the health model and the page are all the real code."""
+    def run_live_map():
+        exec(compile(open(PAGE, encoding="utf-8").read(), PAGE, "exec"), {"__name__": "__main__", "__file__": PAGE})
+    return [st.Page(run_live_map, title="Live Traffic Map", url_path="live-map", default=True)]
 
 
 def snapshot():
@@ -498,8 +508,8 @@ def snapshot():
 class PageHarness:
     """Runs the live-map page with mocked network and captures every map spec the page draws."""
 
-    def __init__(self, key=None, tomtom_outcome=None, geocode_payload=None, clock=None):
-        self.key, self.specs, self.net = key, [], []
+    def __init__(self, key=None, tomtom_outcome=None, geocode_payload=None, clock=None, script=PAGE):
+        self.key, self.specs, self.net, self.script = key, [], [], script
         self.tomtom_outcome = tomtom_outcome if tomtom_outcome is not None else FakeResp(200, flow_payload())
         self.geocode_payload = NOMINATIM_REAL if geocode_payload is None else geocode_payload
         self.service = tomtom.FlowService(clock=clock or __import__("time").time)
@@ -521,13 +531,16 @@ class PageHarness:
         patches = [mock.patch.dict(os.environ), mock.patch.object(requests, "get", side_effect=self._get),
                    mock.patch.object(leaflet_map, "show", side_effect=lambda spec, h=540: self.specs.append(spec)),
                    mock.patch.object(tomtom, "SERVICE", self.service), mock.patch.object(geocode, "MIN_INTERVAL_S", 0.0)]
+        if self.script == APP:
+            from src.ui import navigation
+            patches.append(mock.patch.object(navigation, "build_pages", _router_pages))
         for p in patches:
             p.start()
         self._patches = patches
         os.environ.pop("TOMTOM_API_KEY", None)
         if self.key:
             os.environ["TOMTOM_API_KEY"] = self.key
-        self.at = AppTest.from_file(PAGE, default_timeout=120).run()
+        self.at = AppTest.from_file(self.script, default_timeout=120).run()
         return self
 
     def stop(self):
@@ -710,6 +723,75 @@ class LiveMapPageTests(unittest.TestCase):
         before = snapshot()
         h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
         self.assertEqual(snapshot() - before, set())
+
+
+class SidebarFollowsTheLatestFetchTests(unittest.TestCase):
+    """D4: the sidebar status chip used to be drawn BEFORE the page ran, so it showed the state from before a fetch and lagged one interaction
+    behind. These run the real router (app.py): the chip must already reflect a fetch in the SAME run that performed it."""
+
+    def harness(self, **kw):
+        h = PageHarness(script=APP, **kw).start()
+        self.addCleanup(h.stop)
+        return h
+
+    @staticmethod
+    def chip(h):
+        return " ".join(m.value for m in h.at.sidebar.markdown if "Live traffic:" in m.value)
+
+    def test_a_key_that_was_never_used_reads_not_yet_tested(self):
+        h = self.harness(key=KEY)
+        self.assertEqual([e.value for e in h.at.exception], [])
+        self.assertIn("Live traffic: key found, not yet tested", self.chip(h))
+
+    def test_a_successful_fetch_is_in_the_chip_in_the_same_run(self):
+        h = self.harness(key=KEY).search("silk board junction").choose(0)
+        self.assertIn("not yet tested", self.chip(h), "nothing has been fetched yet")
+        h.fetch()                                               # ONE interaction: the fetch
+        self.assertEqual(len(h.tomtom_calls()), 1)
+        chip = self.chip(h)
+        self.assertIn("Live traffic: last response OK", chip)   # before the fix this still said 'not yet tested'
+        self.assertNotIn("not yet tested", chip)
+        diag = " ".join(m.value for m in h.at.sidebar.expander[0].markdown) + " ".join(c.value for c in h.at.sidebar.expander[0].caption)
+        self.assertIn("The last valid provider response was received at", diag)
+        self.assertIn("this run has made 1 provider request(s)", diag)
+
+    def test_a_failed_fetch_is_in_the_chip_in_the_same_run(self):
+        h = self.harness(key=KEY, tomtom_outcome=FakeResp(401, {})).search("silk board junction").choose(0).fetch()
+        chip = self.chip(h)
+        self.assertIn("Live traffic: provider problem", chip)
+        self.assertNotIn("not yet tested", chip)
+        self.assertNotIn("last response OK", chip)
+        self.assertEqual(len(h.specs[-1]["lines"]), 0, "a failed fetch draws no traffic")
+
+    def test_a_failed_refresh_after_a_success_shows_the_problem_and_keeps_the_last_valid_time(self):
+        h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
+        self.assertIn("last response OK", self.chip(h))
+        h.tomtom_outcome = requests.Timeout("slow")
+        h.service.min_refresh = 0
+        h.fetch()
+        self.assertIn("Live traffic: provider problem", self.chip(h))
+        diag = " ".join(m.value for m in h.at.sidebar.expander[0].markdown)
+        self.assertIn("The last valid response was at", diag)   # the stale reading's own time is still reported
+        self.assertEqual(len(h.specs[-1]["lines"]), 1)
+
+    def test_a_refresh_refused_by_the_30_second_limit_does_not_change_the_status(self):
+        h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
+        before = self.chip(h)
+        h.fetch()                                               # refused by the shared limit: no new request
+        self.assertEqual(len(h.tomtom_calls()), 1)
+        self.assertEqual(self.chip(h), before)
+
+    def test_the_status_stays_under_the_navigation_and_is_drawn_once(self):
+        h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
+        headings = [m.value for m in h.at.sidebar.markdown if "System status" in m.value]
+        self.assertEqual(len(headings), 1, "the sidebar status must be drawn exactly once per run")
+        self.assertEqual([e.value for e in h.at.exception], [])
+        self.assertEqual([e.label for e in h.at.sidebar.expander], ["Diagnostics (files, models, data)"])
+
+    def test_the_key_is_not_in_the_sidebar(self):
+        h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
+        side = " ".join(m.value for m in h.at.sidebar.markdown) + " ".join(c.value for c in h.at.sidebar.caption)
+        self.assertNotIn(KEY, side)
 
 
 if __name__ == "__main__":

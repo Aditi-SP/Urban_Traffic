@@ -143,6 +143,49 @@ def parse_response(payload, lat: float, lon: float, fetched_at: float) -> FlowOb
                            segment=tuple(segment), fetched_at=fetched_at)
 
 
+# WHAT IS VERIFIED about refused keys: a real, deliberately invalid key gets HTTP 401 (checked against the live service). HOW TomTom words an
+# HTTP 403 (no access to the Traffic API, quota, or something else) has NEVER been observed, and TomTom's terms and quotas are unread (README:
+# "Verification status" and "TomTom terms"). The three word lists below are therefore GUESSES, not TomTom's documented wording. They are used
+# only to choose between messages that say what the answer SUGGESTS and what to check; when no list matches, the neutral message is used, which
+# names the possible causes and says TomTom did not say which. The body is used only to choose a message: it is never shown or logged, and the
+# key is removed from it first. Replace the guesses with TomTom's real wording once a real 403 has been seen; do not add new messages before that.
+_QUOTA_WORDS = ("over the limit", "over limit", "quota", "exceeded", "limit reached")
+_PERMISSION_WORDS = ("not authorized", "not authorised", "no access", "not enabled", "not allowed", "permission", "subscription", "product", "not entitled")
+_INVALID_WORDS = ("invalid", "not valid", "expired", "unknown key", "no such key", "missing key", "wrong key")
+
+
+def _body_text(resp, key) -> str:
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001  an unreadable body just means "unclear"
+        return ""
+    parts = []
+    if isinstance(body, dict):
+        parts += [v for k, v in body.items() if k in ("error", "message", "errorText") and isinstance(v, str)]
+        detail = body.get("detailedError")
+        if isinstance(detail, dict):
+            parts += [v for k, v in detail.items() if k in ("code", "message") and isinstance(v, str)]
+    return " ".join(parts).lower().replace(key.lower(), "")[:500]
+
+
+def _denied(status, resp, key) -> ProviderError:
+    """HTTP 401/403. 401 is the verified "key not accepted" answer. For a 403 the body is only a hint (see the note above): the message says what
+    the answer SUGGESTS, and the neutral message is used when the hint is not recognised."""
+    text = _body_text(resp, key)
+    if status == 401:
+        return _err("auth", "TomTom rejected the request: the key was not accepted (it is invalid or has expired). Check that you copied it completely.")
+    if any(w in text for w in _QUOTA_WORDS):
+        return _err("quota", "TomTom rejected the request (HTTP 403) and its answer suggests the key's request quota may be used up. Check your usage and plan "
+                             "in your TomTom account; TomTom's wording for this case has not been verified here.")
+    if any(w in text for w in _PERMISSION_WORDS):
+        return _err("forbidden", "TomTom rejected the request (HTTP 403) and its answer suggests this key may not be enabled for the Traffic Flow API. If so, "
+                                 "enable the Traffic API for this key in your TomTom developer account; TomTom's wording for this case has not been verified here.")
+    if any(w in text for w in _INVALID_WORDS):
+        return _err("auth", "TomTom rejected the request (HTTP 403) and its answer suggests the key is invalid or has expired. Check that you copied it completely.")
+    return _err("auth", "TomTom rejected the request (HTTP 403): the key may be invalid, expired, not enabled for the Traffic API, or over its quota. "
+                        "TomTom's answer did not say which; check the key in your TomTom developer account.")
+
+
 def fetch_flow(lat, lon, api_key, *, http_get=None, clock=time.time) -> FlowObservation:
     """One request to the provider. Raises geo.LocationError (bad location) or ProviderError (everything else)."""
     if not isinstance(api_key, str) or not api_key.strip():
@@ -158,7 +201,7 @@ def fetch_flow(lat, lon, api_key, *, http_get=None, clock=time.time) -> FlowObse
 
     status = resp.status_code
     if status in (401, 403):
-        raise _err("auth", "TomTom rejected the request: the key may be invalid, expired, not enabled for this API, or over its quota.")
+        raise _denied(status, resp, api_key.strip())
     if status == 429:
         raise _err("rate_limited", "TomTom is limiting requests. Please wait before trying again.")
     if status in (400, 404):
@@ -200,6 +243,8 @@ class FlowService:
         self.budget = budget if budget is not None else _env_budget()
         self.requests_made = 0
         self._cooldown_until = 0.0
+        self._last_success = None   # when (our clock) the provider last gave a valid response: a time only, never the data
+        self._last_error = None     # (kind, when) of the provider's last failure
         self._cache, self._last_request, self._inflight, self._lock = {}, {}, {}, threading.Lock()
 
     @staticmethod
@@ -250,6 +295,7 @@ class FlowService:
                 obs = self._fetcher(lat, lon, api_key)
             flight.obs = obs
             with self._lock:
+                self._last_success = obs.fetched_at
                 if self.ttl > 0:  # with ttl 0 nothing is kept after the request (callers that waited on it already have the result)
                     self._cache[k] = obs
                 while len(self._cache) > MAX_CACHE_ENTRIES:
@@ -257,6 +303,9 @@ class FlowService:
             return obs, "provider"
         except BaseException as e:
             flight.error = e
+            if isinstance(e, ProviderError):
+                with self._lock:
+                    self._last_error = (e.kind, self._clock())
             if isinstance(e, ProviderError) and e.kind == "rate_limited":
                 with self._lock:
                     self._cooldown_until = self._clock() + RATE_LIMIT_COOLDOWN_S
@@ -266,8 +315,17 @@ class FlowService:
                 self._inflight.pop(k, None)
             flight.event.set()
 
+    def status(self) -> dict:
+        """What this running service has actually seen (for status panels). No provider request is made and no data is returned."""
+        with self._lock:
+            now = self._clock()
+            return {"requests_made": self.requests_made, "budget": self.budget, "ttl_s": self.ttl,
+                    "cooldown_remaining_s": max(0.0, self._cooldown_until - now),
+                    "last_success_at": self._last_success, "last_error": self._last_error}
+
     def clear(self):
         with self._lock:
+            self._last_success = self._last_error = None
             self._cache.clear()
             self._last_request.clear()
             self.requests_made = 0

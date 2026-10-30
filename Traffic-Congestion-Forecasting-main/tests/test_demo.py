@@ -109,13 +109,27 @@ class DemoLogicTests(unittest.TestCase):
 
 
 class RealtimeInterfaceTests(unittest.TestCase):
+    """What `realtime` still provides (key lookup, the compatibility gap) and how provider data is obtained: only through the shared
+    service in src/live/tomtom.py. All HTTP here is mocked; nothing verifies the real provider."""
+
+    @staticmethod
+    def http_ok(payload):
+        return mock.Mock(status_code=200, json=lambda: payload)
+
     def test_unconfigured_state(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop(realtime.ENV_KEY, None)
             self.assertIsNone(realtime.get_api_key())
             self.assertIsNone(realtime.get_api_key({}))
-        with self.assertRaises(realtime.RealtimeConfigError):
-            realtime.fetch_flow_segment(12.97, 77.59, api_key=None)
+
+    def test_missing_key_is_refused_by_the_shared_service_before_any_request(self):
+        from src.live import tomtom
+        with mock.patch.object(tomtom.requests, "get") as g:
+            for key in (None, "", "   "):
+                with self.assertRaises(tomtom.ProviderError) as cm:
+                    tomtom.FlowService().get(12.97, 77.59, key)
+                self.assertEqual(cm.exception.kind, "no_key")
+            g.assert_not_called()
 
     def test_key_is_read_from_environment_or_secrets(self):
         with mock.patch.dict(os.environ, {realtime.ENV_KEY: "abc"}):
@@ -123,25 +137,41 @@ class RealtimeInterfaceTests(unittest.TestCase):
         os.environ.pop(realtime.ENV_KEY, None)
         self.assertEqual(realtime.get_api_key({realtime.ENV_KEY: "xyz"}), "xyz")
 
-    def test_coordinate_validation(self):
-        with self.assertRaises(ValueError):
-            realtime.fetch_flow_segment(123, 0, api_key="k")
+    def test_coordinate_validation_happens_before_any_request(self):
+        from src.live import geo, tomtom
+        with mock.patch.object(tomtom.requests, "get") as g:
+            for lat, lon in ((123, 0), (12.97, 500), (48.85, 2.35)):  # out of range, out of range, Paris
+                with self.assertRaises(geo.LocationError):
+                    tomtom.FlowService().get(lat, lon, "k")
+            g.assert_not_called()
 
     def test_response_parsing_with_mocked_http_and_missing_field_detection(self):
         """Parsing logic only: this does NOT verify the real provider."""
+        from src.live import tomtom
         ok = {"flowSegmentData": {"frc": "FRC1", "currentSpeed": 30, "freeFlowSpeed": 50, "currentTravelTime": 120,
-                                  "freeFlowTravelTime": 72, "confidence": 0.9, "roadClosure": False}}
-        resp = mock.Mock(**{"json.return_value": ok, "raise_for_status.return_value": None})
-        with mock.patch.object(realtime.requests, "get", return_value=resp) as g:
-            obs = realtime.fetch_flow_segment(12.97, 77.59, api_key="k")
+                                  "freeFlowTravelTime": 72, "confidence": 0.9, "roadClosure": False,
+                                  "coordinates": {"coordinate": [{"latitude": 12.9716, "longitude": 77.5946},
+                                                                 {"latitude": 12.9720, "longitude": 77.5950}]}}}
+        with mock.patch.object(tomtom.requests, "get", return_value=self.http_ok(ok)) as g:
+            obs, source = tomtom.FlowService().get(12.97, 77.59, "k")
             self.assertEqual(g.call_args.kwargs["params"]["point"], "12.97,77.59")
-        self.assertEqual(obs["currentSpeed"], 30)
-        self.assertIsNone(obs["observation_timestamp"])  # provider gives no observation time
+        self.assertEqual((source, obs.current_speed_kmh), ("provider", 30))
+        self.assertFalse(hasattr(obs, "provider_timestamp"))  # the provider gives no observation time; only our fetch time exists
+        self.assertGreater(obs.fetched_at, 0)
         bad = {"flowSegmentData": {"currentSpeed": 30}}
-        resp = mock.Mock(**{"json.return_value": bad, "raise_for_status.return_value": None})
-        with mock.patch.object(realtime.requests, "get", return_value=resp):
-            with self.assertRaisesRegex(ValueError, "lacks expected fields"):
-                realtime.fetch_flow_segment(12.97, 77.59, api_key="k")
+        with mock.patch.object(tomtom.requests, "get", return_value=self.http_ok(bad)):
+            with self.assertRaises(tomtom.ProviderError) as cm:
+                tomtom.FlowService().get(12.97, 77.59, "k")
+        self.assertEqual(cm.exception.kind, "invalid_response")
+
+    def test_the_unsafe_direct_client_no_longer_exists(self):
+        """The stand-alone request function (no cache, request cap, throttle or cooldown) was removed; nothing may bring it back."""
+        self.assertFalse(hasattr(realtime, "fetch_flow_segment"))
+        self.assertFalse(hasattr(realtime, "requests"), "realtime must not import an HTTP library")
+        self.assertFalse(hasattr(realtime, "RealtimeConfigError"))
+        src = Path(realtime.__file__).read_text(encoding="utf-8")
+        for needle in ("requests", "urllib", "api.tomtom.com", "flowSegmentData", "def fetch_"):
+            self.assertNotIn(needle, src.replace("tomtom.SERVICE", ""), needle)
 
     def test_prediction_is_always_blocked_for_provider_data(self):
         blockers = " ".join(realtime.prediction_blockers())

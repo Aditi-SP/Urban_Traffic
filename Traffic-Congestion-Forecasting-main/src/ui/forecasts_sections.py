@@ -1,6 +1,8 @@
 """Section: Traffic Forecasts (the former Live Prediction Demo tab: historical replay / what-if, and the provider interface)."""
+import datetime as dt
 import json
 import os
+import time
 
 import numpy as np
 import pandas as pd
@@ -10,9 +12,10 @@ import plotly.graph_objects as go
 
 from src.dataProcessing import forecast_data as fd
 from src.app import artifacts, demo, realtime
-from src.ui import theme
+from src.live import geo, tomtom
+from src.ui import live_map, theme
 from src.ui.common import *  # noqa: F401,F403  (shared loaders/helpers, see common.py)
-from src.ui.common import split_table_cached
+from src.ui.common import comparison_notes, comparison_table, split_table_cached
 
 
 def reset_demo():
@@ -118,7 +121,7 @@ def render_demo_replay(ctx, xgb_model):
         except (demo.DemoInputError, artifacts.ArtifactError, fd.DatasetError) as e:
             st.error(f"Cannot predict: {e}")
         else:
-            res.update(source=label, scenario=preset, used=used, replay_t=t)
+            res.update(source=label, scenario=preset, used=used, replay_t=t, generated_at=time.time())
             st.session_state["demo_result"] = res
             st.session_state.setdefault("demo_log", []).append({
                 "Run": len(st.session_state.get("demo_log", [])) + 1, "Road": road,
@@ -133,8 +136,11 @@ def render_demo_replay(ctx, xgb_model):
 
     st.divider()
     st.subheader(f"Forecast for {res['road']} on {res['target_date'].date()}")
+    latest = get_data()
+    latest_txt = f" | latest data in the dataset: {latest[fd.DATE_COL].max():%Y-%m-%d}" if latest is not None else ""
     st.caption(f"Input source: **{res['source']}** ({res['scenario']}) | forecast made from data up to "
-               f"{res['last_observation_date'].date()} | horizon: {res['horizon']} | target: Congestion Level (0-100)")
+               f"{res['last_observation_date'].date()}{latest_txt} | generated {time.strftime('%H:%M:%S', time.localtime(res.get('generated_at', time.time())))} "
+               f"(this computer's clock) | horizon: {res['horizon']} | target: Congestion Level (0-100)")
     split = ctx.split_of(res["target_date"])
     if split != "test":
         st.warning(f"The forecast day falls in the {split} period, which the models saw during training or tuning: "
@@ -156,12 +162,16 @@ def render_demo_replay(ctx, xgb_model):
 
     if res["source"] == "What-if scenario" and actual is not None:
         st.caption("The 'actual' value belongs to the unedited history, so it is not a valid target for a what-if input.")
+    st.write("**How the models compared with the baselines on held-out test data** (this applies to the whole test set, not to the single forecast above)")
+    st.caption("Experimental model output: on held-out test data neither model beat the road-mean baseline. "
+               "This is a historical demonstration, not a live observation and not a validated forecast.")
     if ctx.test_metrics:
-        tm = ctx.test_metrics
-        st.caption("For scale: on the held-out test set the typical error (RMSE) was "
-                   f"XGBoost {tm['XGBoost']['RMSE']:.1f}, LSTM {tm['LSTM']['RMSE']:.1f}, "
-                   f"road-mean baseline {tm['Road-mean baseline']['RMSE']:.1f} congestion points. "
-                   "These are empirical errors, not confidence intervals; no uncertainty interval is produced.")
+        st.table(comparison_table(ctx.test_metrics))
+        info = read_json(METRICS_JSON) if os.path.exists(METRICS_JSON) else {"metrics": ctx.test_metrics}
+        st.caption(comparison_notes(info))
+        st.caption("These are empirical errors on past data, not confidence intervals for this forecast; no uncertainty interval is produced.")
+    else:
+        st.info("Saved test metrics are not available (model/metrics.json), so no comparison can be shown here.")
     st.caption("No congestion category (e.g. 'high') is shown: the dataset defines no validated thresholds.")
 
     with st.expander("Input factors and model details"):
@@ -202,18 +212,39 @@ def render_demo_realtime():
                 "Status of this integration: **not verified against the live service**.")
         return
     st.success("API key found (not displayed).")
-    st.caption("The dataset has no road coordinates, so enter a location yourself; nothing is looked up or invented.")
+    st.caption("Requests use the same safeguarded provider service as the Live Traffic Map: one shared request cap, refresh limit, "
+               "rate-limit cooldown and cache setting. Provider data is kept in memory only. The location must be inside the "
+               "Bengaluru area. The dataset has no road coordinates, so enter a location yourself; nothing is looked up or invented.")
+    lat0, lon0, lat1, lon1 = geo.BENGALURU_BBOX[0], geo.BENGALURU_BBOX[1], geo.BENGALURU_BBOX[2], geo.BENGALURU_BBOX[3]
     c1, c2 = st.columns(2)
-    lat = c1.number_input("Latitude", -90.0, 90.0, 12.9716, format="%.5f")
-    lon = c2.number_input("Longitude", -180.0, 180.0, 77.5946, format="%.5f")
+    lat = c1.number_input("Latitude", lat0, lat1, geo.BENGALURU_CENTER[0], format="%.5f")
+    lon = c2.number_input("Longitude", lon0, lon1, geo.BENGALURU_CENTER[1], format="%.5f")
     if st.button("Fetch provider observation"):
-        try:
-            obs = realtime.fetch_flow_segment(lat, lon, key)
-        except Exception as e:  # network/HTTP/format problems are shown verbatim, never replaced by fake data
-            st.error(f"Provider request failed: {type(e).__name__}: {e}")
-            return
-        st.json(obs)
-        st.error("Prediction blocked. Missing model inputs: " + "; ".join(realtime.prediction_blockers(obs)))
+        again = st.session_state.get("demo_rt_obs") is not None and st.session_state.get("demo_rt_point") == (lat, lon)
+        obs, msg = live_map.request_reading(lat, lon, key, force=again)
+        st.session_state["demo_rt_msg"] = msg
+        if obs is not None:  # on failure an earlier reading (if any) stays on screen with its own age
+            st.session_state["demo_rt_obs"], st.session_state["demo_rt_point"] = obs, (lat, lon)
+    msg = st.session_state.get("demo_rt_msg")
+    if msg:
+        getattr(st, msg[0])(msg[1])
+    obs = st.session_state.get("demo_rt_obs")
+    if obs is None:
+        st.info("No provider reading yet. Press **Fetch provider observation**; nothing is shown unless TomTom returns a valid response.")
+        return
+    age = tomtom.age_s(obs)
+    if tomtom.is_stale(obs):
+        st.warning(f"Stale reading: fetched {live_map.age_text(age)}. It is not a current observation.")
+    rows = [("Provider", obs.provider), ("Point requested", f"{obs.lat:.5f}, {obs.lon:.5f}"),
+            ("Last fetched (this computer's clock)", f"{live_map.clock_text(obs.fetched_at)} ({live_map.age_text(age)})"),
+            ("Provider measurement time", "not provided by this API"),
+            ("Current speed (km/h)", f"{obs.current_speed_kmh:.0f}"), ("Free-flow speed (km/h)", f"{obs.free_flow_speed_kmh:.0f}"),
+            ("Current travel time (s)", f"{obs.current_travel_time_s:.0f}"), ("Free-flow travel time (s)", f"{obs.free_flow_travel_time_s:.0f}"),
+            ("Confidence (0-1)", f"{obs.confidence:.2f}"), ("Road closure", "not stated" if obs.road_closure is None else str(obs.road_closure)),
+            ("Functional road class", obs.frc or "not stated")]
+    st.table(pd.DataFrame(rows, columns=["Field", "Value"]))
+    st.caption(tomtom.ATTRIBUTION + ". This is a live observation, not a forecast.")
+    st.error("Prediction blocked. Missing model inputs: " + "; ".join(realtime.prediction_blockers()))
 
 
 def render_demo(xgb_model, lstm_ready):
@@ -239,13 +270,45 @@ def render_demo(xgb_model, lstm_ready):
 
 
 
+def render_data_status():
+    """What is observed, what is replayed and what is forecast, with the real dates and why the page cannot reach recent dates."""
+    df = get_data()
+    if df is None:
+        return
+    first, last = df[fd.DATE_COL].min(), df[fd.DATE_COL].max()
+    today = dt.date.today()
+    age = (today - last.date()).days
+    theme.section("Data and forecast status", f"Today is {today:%Y-%m-%d} on this computer.")
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(theme.card_html("Historical observed traffic", f"Until {last:%Y-%m-%d}",
+                                f"Real daily records from the Kaggle dataset ({len(df):,} rows, {first:%Y-%m-%d} to {last:%Y-%m-%d}). The latest one is "
+                                f"{age} days old. Observed, but not live.", "warn" if age > 30 else "ok"), unsafe_allow_html=True)
+    c2.markdown(theme.card_html("Replay and what-if", "Past days only",
+                                "Replay re-runs the models on real past days; what-if edits the last day's conditions. Neither is a forecast of the "
+                                "future, and both are labelled that way.", "info"), unsafe_allow_html=True)
+    c3.markdown(theme.card_html("Future forecasts", "Not available",
+                                f"The models forecast one day after the last observed day, so the latest date this dataset can reach is "
+                                f"{(last + dt.timedelta(days=1)):%Y-%m-%d}. Nothing newer has been observed, so no forecast for recent or future dates "
+                                "is made or invented.", "bad"), unsafe_allow_html=True)
+    st.caption("To use newer observations, first check a file of them with `python -m src.dataProcessing.check_new_data <file.csv>` (read-only). "
+               "Using them for forecasts would also require retraining and re-evaluating the models, which needs separate approval; "
+               "until then nothing here is validated for 2026.")
+
+
 def render():
     theme.page_header(
         "Traffic Forecasts",
-        "Next-day congestion from the historical models and baselines",
-        chips=[("Historical data 2022-2024", "warn"), ("Not validated for 2026", "bad"), ("Baselines shown beside the models", "info")])
-    theme.callout("<b>How to read this page.</b> Everything here replays the 2022\u20132024 dataset: these are historical model results, "
-                  "not live traffic and not validated 2026 forecasts. The models were evaluated on 2024-03-21 to 2024-08-09, and live "
-                  "provider data cannot be fed to them because the inputs they need are not available from a provider.")
+        "Experimental next-day congestion demonstrations on historical data",
+        chips=[("Historical data 2022-2024", "warn"), ("Not validated for 2026", "bad"), ("Experimental models", "warn"),
+               ("Baselines shown beside the models", "info")])
+    df = get_data()
+    span = (f"the historical dataset ({df[fd.DATE_COL].min():%Y-%m-%d} to {df[fd.DATE_COL].max():%Y-%m-%d}, "
+            f"{(dt.date.today() - df[fd.DATE_COL].max().date()).days} days before today)" if df is not None else "the historical dataset")
+    theme.callout(f"<b>How to read this page.</b> Everything here replays {span}: historical results, "
+                  "not live traffic and not validated 2026 forecasts. <b>The LSTM and XGBoost models are experimental:</b> on the "
+                  "held-out test set (2024-03-21 to 2024-08-09) neither beat the simple per-road historical-mean baseline, and that "
+                  "evaluation does not show that either model predicts day-to-day changes in congestion. Recent real-world "
+                  "performance has not been established: the dataset ends on 2024-08-09.")
     xgb_model, lstm_ready = ensure_ready()
     render_demo(xgb_model, lstm_ready)
+    render_data_status()

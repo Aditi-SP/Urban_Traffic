@@ -61,6 +61,8 @@ button[kind="secondary"] {{ border-radius: 10px; }}
 div[data-testid="stPlotlyChart"] {{ border: 1px solid {BORDER}; border-radius: 14px; overflow: hidden; }}
 iframe {{ border: 1px solid {BORDER}; border-radius: 14px; }}
 @media (max-width: 1000px) {{
+  div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; }}
+  div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"], div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{ min-width: 100% !important; flex: 1 1 100% !important; }}
   div[data-testid="stHorizontalBlock"]:has(iframe) {{ flex-wrap: wrap; }}
   div[data-testid="stHorizontalBlock"]:has(iframe) > div[data-testid="stColumn"], div[data-testid="stHorizontalBlock"]:has(iframe) > div[data-testid="column"] {{ min-width: 100% !important; flex: 1 1 100% !important; }}
 }}

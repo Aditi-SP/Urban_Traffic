@@ -49,6 +49,34 @@ def open_page(title: str, env_key=None):
         return AppTest.from_file(str(root_dir / page.path), default_timeout=300).run()
 
 
+def project_tree(root: Path) -> dict:
+    """{relative path: (size, mtime_ns)} of every file under root (bytecode caches excluded)."""
+    out = {}
+    for p in root.rglob("*"):
+        if p.is_file() and "__pycache__" not in p.parts:
+            st = p.stat()
+            out[p.relative_to(root).as_posix()] = (st.st_size, st.st_mtime_ns)
+    return out
+
+
+def unexpected_storage(root: Path) -> list:
+    """Database files and upload folders that should not exist. The one legitimate community database is allowed; nothing else is."""
+    found = []
+    for p in root.rglob("*"):
+        rel = p.relative_to(root).as_posix()
+        if "__pycache__" in p.parts:
+            continue
+        if p.is_file() and re.search(r"\.(db|sqlite|sqlite3)(-journal|-wal|-shm)?$", p.name) and rel != "data/community/community.db":
+            found.append(rel)
+        if p.is_dir() and "upload" in p.name.lower():
+            found.append(rel)
+    community = root / "data" / "community"
+    if community.is_dir():
+        found += [p.relative_to(root).as_posix() for p in community.iterdir()
+                  if p.name != "community.db" and p.relative_to(root).as_posix() not in found]
+    return sorted(set(found))
+
+
 class NavigationDefinitionTests(unittest.TestCase):
     def test_exactly_the_five_approved_sections_in_order(self):
         self.assertEqual([p.title for p in navigation.PAGES], EXPECTED_TITLES)
@@ -117,21 +145,63 @@ class ShellPagesTests(unittest.TestCase):
         self.assertNotIn("km/h", text)
         self.assertIsNone(re.search(r"\d{1,2}\.\d{3,}\s*,\s*\d{2,3}\.\d{3,}", text), "coordinates must not appear")
 
-    def test_community_page_does_not_pretend_to_work(self):
+    def test_community_page_is_a_working_form_that_is_honest_about_what_it_is(self):
+        """(Replaces the Stage-0 'not implemented' check.) The storage behaviour itself is tested in tests/test_community.py."""
         at = self.pages["Community Reports"]
         text = " ".join(all_text(at))
-        self.assertIn("Not implemented yet", text)
-        self.assertIn("not available yet", text)
-        self.assertIn("No sample reports are shown", text)
-        for kind in ("file_uploader", "camera_input", "arrow_data_frame", "plotly_chart"):
-            self.assertEqual(len(at.get(kind)), 0, f"unexpected {kind}: uploads/reports must not exist yet")
-        self.assertEqual(len(at.button), 0)
+        for needle in ("Anonymous, unverified", "Stored on this computer", "Send a report", "Photos", "Not available"):
+            self.assertIn(needle, text)
+        self.assertIn("Send report", [b.label for b in at.button])
+        self.assertEqual(len(at.text_area), 1)
+        for kind in ("file_uploader", "camera_input", "plotly_chart"):
+            self.assertEqual(len(at.get(kind)), 0, f"unexpected {kind}: there is no photo upload")
 
     def test_stage0_creates_no_database_and_no_upload_folder(self):
-        for pattern in ("**/*.db", "**/*.sqlite", "**/*.sqlite3"):
-            self.assertEqual([p for p in root_dir.glob(pattern) if ".venv" not in str(p)], [])
-        self.assertFalse((root_dir / "data" / "community").exists())
-        self.assertFalse((root_dir / "data" / "uploads").exists())
+        """Running the pages creates no database, no upload folder and no other file in the project.
+
+        (Rewritten: the old version required that NO database exists at all, which is false once someone legitimately saves a community report.)
+        The one legitimate database, data/community/community.db, may exist. This test never opens, changes or resets it: the pages run against a
+        temporary COMMUNITY_DB_PATH. It checks that (1) no UNEXPECTED database file or upload folder exists anywhere in the project, (2) data/community
+        holds nothing but that one database, (3) the real database is byte-for-byte unchanged, and (4) viewing the pages creates nothing, neither at
+        the temporary location nor anywhere in the project, and changes nothing under data/.
+        """
+        import hashlib
+        real_db = root_dir / "data" / "community" / "community.db"
+        before_hash = hashlib.sha256(real_db.read_bytes()).hexdigest() if real_db.is_file() else None
+        before_tree = project_tree(root_dir)
+        self.assertEqual(unexpected_storage(root_dir), [], "unexpected database or upload artefacts already exist in the project")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"COMMUNITY_DB_PATH": str(Path(tmp) / "viewing" / "c.db")}):
+            os.environ.pop(KEY, None)
+            for script in ("src/ui/pages/community.py", "src/ui/pages/live_map.py", "src/ui/pages/details.py", "app.py"):
+                at = AppTest.from_file(str(root_dir / script), default_timeout=300).run()
+                self.assertEqual([e.value for e in at.exception], [], script)
+            self.assertEqual(list(Path(tmp).rglob("*")), [], "viewing the pages must not create a database or any file at the report location")
+        after_tree = project_tree(root_dir)
+        self.assertEqual(sorted(set(after_tree) - set(before_tree)), [], "running the pages created files in the project")
+        self.assertEqual(sorted(set(before_tree) - set(after_tree)), [], "running the pages removed files from the project")
+        self.assertEqual({k: v for k, v in after_tree.items() if k.startswith("data/")}, {k: v for k, v in before_tree.items() if k.startswith("data/")},
+                         "something under data/ was changed")
+        self.assertEqual(unexpected_storage(root_dir), [])
+        self.assertEqual(hashlib.sha256(real_db.read_bytes()).hexdigest() if real_db.is_file() else None, before_hash, "the real community database was modified")
+
+    def test_the_storage_guard_flags_real_problems_and_allows_the_legitimate_database(self):
+        """The check above must be able to fail: it flags a stray database, an upload folder or an extra file, and allows the one real database."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data" / "community").mkdir(parents=True)
+            self.assertEqual(unexpected_storage(root), [])
+            (root / "data" / "community" / "community.db").write_bytes(b"x")  # the legitimate database
+            self.assertEqual(unexpected_storage(root), [])
+            (root / "stray.sqlite").write_bytes(b"x")
+            (root / "src").mkdir()
+            (root / "src" / "other.db").write_bytes(b"x")
+            (root / "data" / "uploads").mkdir()
+            (root / "data" / "community" / "photos").mkdir()
+            (root / "data" / "community" / "community.db-journal").write_bytes(b"x")
+            found = unexpected_storage(root)
+            for needle in ("stray.sqlite", "src/other.db", "data/uploads", "data/community/photos", "data/community/community.db-journal"):
+                self.assertIn(needle, found)
+            self.assertNotIn("data/community/community.db", found)
 
     def test_provider_key_is_never_displayed(self):
         at = open_page("Live Traffic Map", env_key="FAKE-SECRET-KEY-9876")
@@ -146,7 +216,7 @@ class ShellPagesTests(unittest.TestCase):
             router = AppTest.from_file(str(root_dir / "app.py"), default_timeout=300).run()
         side = " ".join(m.value for m in router.sidebar.markdown)
         self.assertNotIn("FAKE-SECRET-KEY-9876", side)
-        self.assertIn("Provider key found, not yet verified", side)
+        self.assertIn("Live traffic: key found, not yet tested", side)  # a key is not proof that traffic works
 
 
 class RouterTests(unittest.TestCase):
@@ -160,7 +230,7 @@ class RouterTests(unittest.TestCase):
         self.assertIn("Live traffic: not configured", side)
         self.assertIn("Data: historical, 2022-2024", side)
         self.assertIn("Models: not validated for 2026", side)
-        self.assertEqual([e.label for e in at.sidebar.expander], ["Files / Status"])  # Plot Controls now appear only on the pages that use them
+        self.assertEqual([e.label for e in at.sidebar.expander], ["Diagnostics (files, models, data)"])  # Plot Controls now appear only on the pages that use them; Files / Status became Diagnostics
 
 
 @needs_all
@@ -194,8 +264,17 @@ class DataPagesTests(unittest.TestCase):
     def test_details_page_live_values_are_unavailable_and_history_is_real(self):
         at = self.pages["Road & Incident Details"]
         text = " ".join(all_text(at))
-        self.assertIn("will be added in a later stage", text)
-        self.assertEqual(text.count('<div class="val">Not available</div>'), 4)  # the four live-status cards: speed, travel time, closure, incidents
+        # D7: honest about what exists. No live data is read here; incidents are not implemented; nothing claims the provider is not configured
+        for needle in ("What this page shows", "It reads no live data", "Live Traffic Map", "Incidents are not implemented",
+                       "No incident data source is connected", "community reports are separate and unverified"):
+            self.assertIn(needle, text.replace("<b>", "").replace("</b>", ""))
+        self.assertEqual(text.count('<div class="val">Not shown here</div>'), 3)    # speed, travel time, closure: live for a searched place, elsewhere
+        self.assertEqual(text.count('<div class="val">Not implemented</div>'), 1)   # incidents
+        self.assertNotIn('<div class="val">Not available</div>', text)
+        for outdated in ("which is not configured", "will be added in a later stage", "Needs live provider data", "later stage"):
+            self.assertNotIn(outdated, text)
+        self.assertNotIn("incident feed is live", text.lower())
+        self.assertNotIn("live incident", text.lower().replace("live incidents: not", "").replace("no live incident", ""))
         import pandas as pd
         from src.dataProcessing import forecast_data as fd
         df = fd.load_raw()

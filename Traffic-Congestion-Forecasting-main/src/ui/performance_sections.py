@@ -11,8 +11,36 @@ import plotly.graph_objects as go
 from src.dataProcessing import forecast_data as fd
 from src.app import artifacts, demo, realtime
 from src.ui import theme
+from src.ui.common import comparison_notes, comparison_table
 from src.ui.common import *  # noqa: F401,F403  (shared loaders/helpers, see common.py)
 from src.ui.common import split_table_cached
+
+
+def render_provenance(info):
+    """Where the headline numbers come from, and what they can and cannot show. Everything is read from the saved evaluation and the dataset."""
+    df = get_data()
+    n, period = info.get("n_test_samples"), info.get("test_period")
+    rows = [f"**Dataset:** Kaggle `preethamgouda/banglore-city-traffic-dataset`"
+            + (f", {len(df):,} rows, {df[fd.DATE_COL].min():%Y-%m-%d} to {df[fd.DATE_COL].max():%Y-%m-%d}, daily, {df[fd.ROAD_COL].nunique()} roads" if df is not None else "")
+            + ". Its provenance and licence are unverified.",
+            "**Evaluation:** one chronological split by target date. The figures above are from the **held-out test set**"
+            + (f" ({period[0]} to {period[1]}, {n} samples, the same rows for every model)." if n and period else "."),
+            "**Compared with:** the road-mean baseline (each road's training-period average) and persistence (tomorrow = today).",
+            "**Training versus held-out:** errors measured during training or validation (for example the XGBoost training curve) only decide when "
+            "training stops. They are not performance; only held-out test figures count.",
+            "**What this shows:** how the models did on 2022-2024 data. It does **not** show accuracy on live traffic or on 2025-2026."]
+    st.markdown("**How these numbers were produced**\n\n" + "\n".join(f"- {r}" for r in rows))
+    m = info.get("metrics", {})
+    with st.expander("What do MAE, RMSE and R² mean?"):
+        mae = m.get("Road-mean baseline", {}).get("MAE")
+        st.markdown(
+            "- **MAE** (mean absolute error): the average size of the miss, in congestion points on the 0-100 scale. "
+            + (f"For the road-mean baseline it is {mae:.1f}: on average its prediction is about {mae:.0f} points away from what happened. " if mae else "")
+            + "Lower is better.\n"
+            "- **RMSE** (root mean squared error): like MAE but large misses count more, so it is the larger of the two. Lower is better.\n"
+            "- **R²**: the share of the variation in congestion that the predictions explain. 1 is perfect, 0 is no better than always guessing the overall "
+            "average, and below 0 is worse than that.\n"
+            "- A model is only useful if it beats the simple baselines on the **same** held-out rows. Here neither learned model does.")
 
 
 def render_overview():
@@ -37,11 +65,16 @@ def render_overview():
         theme.stat_cards([{"label": name, "value": f"RMSE {v['RMSE']:.2f}", "note": f"R² {v['R2']:.3f}  |  MAE {v['MAE']:.2f}",
                            "kind": "ok" if name == lowest else "info"} for name, v in m.items()])
         st.caption("Green marks the lowest test RMSE. The differences between the road mean, LSTM and XGBoost are within statistical noise (see Model Results).")
+        st.table(comparison_table(m))
+        info = read_json(metrics_path)
+        st.caption(comparison_notes(info))
+        render_provenance(info)
         best_model = min(("LSTM", "XGBoost"), key=lambda k: m[k]["RMSE"])
         base = m["Road-mean baseline"]["RMSE"]
         if m[best_model]["RMSE"] >= base:
-            st.warning("Honest finding: neither learned model beats the simple road-average baseline. They learn "
-                       "which roads are busy, but next-day changes are barely predictable from this data.")
+            st.warning("Experimental models. Honest finding: neither learned model beats the simple per-road historical-mean baseline "
+                       "on the held-out test set. They learn which roads are busy, but this evaluation does not show that they predict "
+                       "next-day changes. Their performance on recent real-world conditions has not been established.")
     else:
         st.info("No metrics yet: run `python -m src.modelTraining.comparePerformancePlots`.")
 
@@ -340,10 +373,12 @@ def render_limits():
         "- Kaggle dataset `preethamgouda/banglore-city-traffic-dataset`. Third-party descriptions say it derives from "
         "Government of Karnataka open traffic data; this was **not verified** from an authoritative source, and the "
         "**licence is unknown**: check the Kaggle page before redistributing.\n"
-        "- The dataset looks synthetic/aggregated (43% of congestion values are exactly 100) and has no coordinates.")
+        "- The dataset looks synthetic/aggregated (about 43.5% of congestion values are exactly 100) and has no coordinates.")
     st.subheader("Limitations")
     st.markdown(
-        "- Next-day congestion is only weakly predictable from this data; the models do not beat the road-mean baseline.\n"
+        "- Experimental models: beyond each road's usual level, next-day congestion showed no predictable within-road signal in the Stage 5A benchmark "
+        "(within-road lag-1 correlation about 0), and on the held-out test set the models do not beat the road-mean baseline.\n"
+        "- Recent real-world performance has not been established: the dataset ends on 2024-08-09 and nothing was validated against later conditions.\n"
         "- Daily, gappy data: no hour-of-day (rush-hour) modelling; samples exist only where day t and t+1 are observed.\n"
         "- One chronological split (about 4.5 months of test data), no cross-validation, no uncertainty intervals.\n"
         "- Predictions are clipped to [0, 100]. No congestion categories are shown (no validated thresholds).\n"
@@ -351,6 +386,10 @@ def render_limits():
         "the real-time integration is **unverified** against the live service.\n"
         "- PySpark runs in local mode on a single machine; nothing is distributed or streaming.")
     if os.path.exists(EVAL_REPORT_MD):
+        st.caption("Note on the saved report below: it quotes a pooled day-to-day (lag-1) correlation of about 0.21 as showing weak predictability. "
+                   "That figure is largely driven by persistent differences between roads, not by within-road predictability. Within roads the "
+                   "lag-1 correlation is approximately 0 (0.003 in the Stage 5A benchmark), so it is not evidence that next-day changes can be "
+                   "predicted. The report itself is shown unchanged.")
         with st.expander("Full evaluation report (model/evaluation_report.md)"):
             st.markdown(read_text(EVAL_REPORT_MD))
 

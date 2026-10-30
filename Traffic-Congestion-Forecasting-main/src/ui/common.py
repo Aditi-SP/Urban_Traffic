@@ -14,6 +14,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from src.dataProcessing import forecast_data as fd
 from src.app import artifacts, demo, realtime
+from src.live import credentials
 from src.modelTraining import predictLstm, predictXgboost
 from src.ui import theme
 
@@ -133,18 +134,9 @@ def render_setup_banner(data_error, model_problems):
 
 
 def tomtom_key():
-    """The optional TomTom key from the environment, or from a secrets file IF one exists.
-    (Touching st.secrets without a secrets file makes Streamlit show a 'No secrets found' error box.)"""
-    key = realtime.get_api_key()
-    if key:
-        return key
-    files = (os.path.join(PROJECT_ROOT, ".streamlit", "secrets.toml"), os.path.expanduser(os.path.join("~", ".streamlit", "secrets.toml")))
-    if any(os.path.isfile(f) for f in files):
-        try:
-            return realtime.get_api_key(st.secrets)
-        except Exception:  # unreadable secrets file: treat as not configured
-            return None
-    return None
+    """The TomTom key of THIS server process, or None: the TOMTOM_API_KEY environment variable, then the project and home secrets files.
+    The rules, and the reasons a key can be missing, are in src/live/credentials.py (which also explains them without showing the key)."""
+    return credentials.load().key
 
 
 def dataset_unavailable():
@@ -185,6 +177,47 @@ def read_json(path):
 def read_text(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+# Order matters: the baseline comes first so every model is read against it.
+COMPARISON_ROWS = [("Road-mean baseline", "Road-mean baseline (each road's training-period average)"),
+                   ("Persistence baseline", "Persistence baseline (tomorrow = today)"),
+                   ("XGBoost", "XGBoost (experimental)"),
+                   ("LSTM", "LSTM (experimental)")]
+
+
+def comparison_table(metrics):
+    """Held-out test metrics of the models beside the baselines, taken from the SAVED metrics.json (nothing is recomputed or invented).
+
+    The last column is simple arithmetic on the saved RMSEs: model RMSE minus road-mean RMSE (positive = worse than the baseline).
+    """
+    base = metrics.get("Road-mean baseline")
+    rows = []
+    for key, label in COMPARISON_ROWS:
+        v = metrics.get(key)
+        if not v:
+            continue
+        diff = "reference" if key == "Road-mean baseline" else (f"{v['RMSE'] - base['RMSE']:+.2f}" if base else "n/a")
+        rows.append({"Model": label, "MAE (points)": f"{v['MAE']:.2f}", "RMSE (points)": f"{v['RMSE']:.2f}",
+                     "R\u00b2": f"{v['R2']:.3f}", "RMSE minus road-mean RMSE": diff})
+    return pd.DataFrame(rows)
+
+
+def comparison_notes(info):
+    """Plain-language notes for comparison_table, from the saved metrics.json content (`info` = the whole file)."""
+    n, period = info.get("n_test_samples"), info.get("test_period")
+    where = (f"{n} held-out test samples, {period[0]} to {period[1]}, the same rows for every model" if n and period
+             else "the held-out test samples, the same rows for every model")
+    text = (f"Scored on {where}. Errors are in congestion-level points (0-100 scale): lower MAE and RMSE and higher R\u00b2 are better. "
+            "A positive value in the last column means worse than the road-mean baseline.")
+    diffs = (info.get("uncertainty") or {}).get("rmse_difference") or {}
+    shown = [(k, diffs[k]) for k in ("LSTM - Road-mean baseline", "XGBoost - Road-mean baseline") if k in diffs]
+    if shown:
+        parts = "; ".join(f"{k.replace(' - ', ' minus ')}: {v['observed']:+.2f} (95% CI {v['ci95'][0]:+.2f} to {v['ci95'][1]:+.2f})" for k, v in shown)
+        text += f" Saved bootstrap intervals for the RMSE difference (not recomputed here): {parts}."
+        if all(not v.get("ci_excludes_zero", True) for _, v in shown):
+            text += (" Both intervals include zero, so this evaluation does not show either model to be better or worse than the baseline.")
+    return text
 
 
 # -------------------------------
