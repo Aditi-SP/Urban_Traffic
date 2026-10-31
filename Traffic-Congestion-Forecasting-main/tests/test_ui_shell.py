@@ -24,7 +24,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from src.ui import navigation, theme  # noqa: E402
 
-EXPECTED_TITLES = ["Live Traffic Map", "Traffic Forecasts", "Community Reports", "Road & Incident Details",
+EXPECTED_TITLES = ["Live Traffic Map", "Traffic Forecasts", "Community Reports", "Road History",
                    "Model Insights"]
 KEY = "TOMTOM_API_KEY"
 
@@ -149,12 +149,15 @@ class ShellPagesTests(unittest.TestCase):
         """(Replaces the Stage-0 'not implemented' check.) The storage behaviour itself is tested in tests/test_community.py."""
         at = self.pages["Community Reports"]
         text = " ".join(all_text(at))
-        for needle in ("Anonymous, unverified", "Stored on this computer", "Send a report", "Photos", "Not available"):
+        for needle in ("Anonymous, unverified", "Stored on this computer", "Send a report", "Report traffic with a photo", "Fresh photos"):
             self.assertIn(needle, text)
-        self.assertIn("Send report", [b.label for b in at.button])
+        self.assertNotIn("Not available", text)    # photos are no longer a placeholder
+        labels = [b.label for b in at.button]
+        self.assertIn("Send report", labels)
+        self.assertIn("Report Traffic with Photo", labels)   # the prominent photo-report button (its flow is tested in tests/test_photo_reports.py)
         self.assertEqual(len(at.text_area), 1)
         for kind in ("file_uploader", "camera_input", "plotly_chart"):
-            self.assertEqual(len(at.get(kind)), 0, f"unexpected {kind}: there is no photo upload")
+            self.assertEqual(len(at.get(kind)), 0, f"unexpected {kind}: the photo capture is a custom component, not a Streamlit uploader")
 
     def test_stage0_creates_no_database_and_no_upload_folder(self):
         """Running the pages creates no database, no upload folder and no other file in the project.
@@ -208,36 +211,36 @@ class ShellPagesTests(unittest.TestCase):
         self.assertEqual([e.value for e in at.exception], [])
         blob = " ".join(all_text(at))
         self.assertNotIn("FAKE-SECRET-KEY-9876", blob)
-        self.assertIn("Traffic provider key found", blob)  # honest: a key is not live data
+        for phrase in ("Traffic provider key found", "Key found, not tested", "Traffic provider"):   # no provider status before a real request
+            self.assertNotIn(phrase, blob)
         self.assertIn("No reading yet", blob)
         self.assertNotIn("Live traffic not configured", blob)
-        # the router's sidebar status must not leak the key either
+        # the router's sidebar must not leak the key either (it is navigation only now: no status panel says anything about the key)
         with mock.patch.dict(os.environ, {KEY: "FAKE-SECRET-KEY-9876"}):
             router = AppTest.from_file(str(root_dir / "app.py"), default_timeout=300).run()
         side = " ".join(m.value for m in router.sidebar.markdown)
         self.assertNotIn("FAKE-SECRET-KEY-9876", side)
-        self.assertIn("Live traffic: key found, not yet tested", side)  # a key is not proof that traffic works
+        self.assertNotIn("key found", side)
 
 
 class RouterTests(unittest.TestCase):
-    def test_router_launches_without_a_key_and_shows_status_in_the_sidebar(self):
+    def test_router_launches_without_a_key_and_the_sidebar_is_navigation_only(self):
         env = {k: v for k, v in os.environ.items() if k != KEY}
         with mock.patch.dict(os.environ, env, clear=True):
             at = AppTest.from_file(str(root_dir / "app.py"), default_timeout=300).run()
         self.assertEqual([e.value for e in at.exception], [])
         self.assertEqual([e.value for e in at.error], [])
         side = " ".join(m.value for m in at.sidebar.markdown)
-        self.assertIn("Live traffic: not configured", side)
-        self.assertIn("Data: historical, 2022-2024", side)
-        self.assertIn("Models: not validated for 2026", side)
-        self.assertEqual([e.label for e in at.sidebar.expander], ["Diagnostics (files, models, data)"])  # Plot Controls now appear only on the pages that use them; Files / Status became Diagnostics
+        for gone in ("System status", "Live traffic:", "Data: historical", "Models: not validated", "Reports: working"):
+            self.assertNotIn(gone, side)
+        self.assertEqual([e.label for e in at.sidebar.expander], [])    # no Diagnostics panel any more  # Plot Controls now appear only on the pages that use them; Files / Status became Diagnostics
 
 
 @needs_all
 class DataPagesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.pages = {t: open_page(t) for t in ("Traffic Forecasts", "Road & Incident Details", "Model Insights")}
+        cls.pages = {t: open_page(t) for t in ("Traffic Forecasts", "Road History", "Model Insights")}
 
     def test_pages_load_without_exceptions_or_error_boxes(self):
         for title, at in self.pages.items():
@@ -270,20 +273,16 @@ class DataPagesTests(unittest.TestCase):
         self.assertIn("Input source: Historical replay", text.replace("**", ""))
         self.assertIn("Persistence baseline", text)  # baseline stays visible next to the models
 
-    def test_details_page_live_values_are_unavailable_and_history_is_real(self):
-        at = self.pages["Road & Incident Details"]
+    def test_road_history_page_has_no_placeholders_and_its_history_is_real(self):
+        at = self.pages["Road History"]
         text = " ".join(all_text(at))
-        # D7: honest about what exists. No live data is read here; incidents are not implemented; nothing claims the provider is not configured
-        for needle in ("What this page shows", "It reads no live data", "Live Traffic Map", "Incidents are not implemented",
-                       "No incident data source is connected", "community reports are separate and unverified"):
-            self.assertIn(needle, text.replace("<b>", "").replace("</b>", ""))
-        self.assertEqual(text.count('<div class="val">Not shown here</div>'), 3)    # speed, travel time, closure: live for a searched place, elsewhere
-        self.assertEqual(text.count('<div class="val">Not implemented</div>'), 1)   # incidents
-        self.assertNotIn('<div class="val">Not available</div>', text)
-        for outdated in ("which is not configured", "will be added in a later stage", "Needs live provider data", "later stage"):
-            self.assertNotIn(outdated, text)
-        self.assertNotIn("incident feed is live", text.lower())
-        self.assertNotIn("live incident", text.lower().replace("live incidents: not", "").replace("no live incident", ""))
+        self.assertIn("Road History", text)
+        # the non-functional live-status / incident placeholders are gone
+        for gone in ("Not shown here", "Not implemented", "Not available", "Incidents are not implemented", "Live status", "Speed vs free-flow",
+                     "Road closure", "which is not configured", "later stage"):
+            self.assertNotIn(gone, text)
+        self.assertNotIn("incident", text.lower().replace("not live conditions and not incidents", ""))
+        self.assertEqual([e.value for e in at.exception], [])
         import pandas as pd
         from src.dataProcessing import forecast_data as fd
         df = fd.load_raw()

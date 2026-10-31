@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo capture</title>
+<style>
+  :root { --bg:#111B30; --card:#16213A; --line:#2A3A5C; --text:#E6EDF7; --mute:#93A4C3; --blue:#4DA3FF; --green:#22C55E; --amber:#F59E0B; --red:#EF4444; }
+  html, body { margin:0; background:transparent; color:var(--text); font:14px/1.45 "Source Sans Pro", system-ui, sans-serif; }
+  .box { border:1px solid var(--line); border-radius:12px; background:var(--card); padding:12px 14px; margin-bottom:10px; }
+  .step { font-weight:700; margin-bottom:4px; }
+  .hint { color:var(--mute); margin:0 0 8px 0; font-size:13px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; }
+  button { cursor:pointer; border:1px solid var(--line); background:#1C2A4A; color:var(--text); border-radius:8px; padding:9px 14px; font:inherit; font-weight:600; min-height:40px; }
+  button.primary { background:var(--blue); color:#06101F; border-color:var(--blue); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .status { margin-top:8px; font-size:13px; }
+  .ok { color:var(--green); } .warn { color:var(--amber); } .bad { color:var(--red); }
+  video, img.preview { display:block; width:100%; max-height:300px; object-fit:contain; border-radius:8px; background:#000; margin-top:8px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="box" id="loc-box">
+  <div class="step">1. Share your location</div>
+  <p class="hint">A photo is only accepted together with the GPS position of this device, so that people looking at the same area can see where the traffic is.
+     The position is saved with the photo; your name or account is never saved, and you cannot type a position in by hand.</p>
+  <div class="row"><button id="btn-loc" class="primary" type="button">Share my location</button></div>
+  <div id="loc-status" class="status" role="status" aria-live="polite"></div>
+</div>
+<div class="box" id="photo-box">
+  <div class="step">2. Add a photo of the traffic</div>
+  <p class="hint">Take the photo where you are now. The picture is shrunk on your device before it is sent, and the server removes everything the camera wrote into the file.</p>
+  <div class="row">
+    <button id="btn-camera" class="primary" type="button">Open camera</button>
+    <button id="btn-choose" type="button">Choose an existing photo</button>
+  </div>
+  <video id="video" playsinline muted hidden></video>
+  <div class="row" id="cam-actions" hidden style="margin-top:8px">
+    <button id="btn-snap" class="primary" type="button">Take photo</button>
+    <button id="btn-cancel" type="button">Cancel</button>
+  </div>
+  <img id="preview" class="preview" alt="Preview of the photo that will be sent" hidden>
+  <div class="row" id="retake-row" hidden style="margin-top:8px"><button id="btn-retake" type="button">Use a different photo</button></div>
+  <div id="photo-status" class="status" role="status" aria-live="polite"></div>
+  <input id="file-choose" type="file" accept="image/jpeg,image/png,image/webp,image/*" hidden>
+  <input id="file-camera" type="file" accept="image/*" capture="environment" hidden>
+</div>
+<canvas id="canvas" hidden></canvas>
+<script>
+(function () {
+  "use strict";
+  var MAX_SIDE = 1600, JPEG_QUALITY = 0.82, MAX_FILE_BYTES = 25 * 1024 * 1024;
+  var state = { image: null, lat: null, lon: null, accuracy_m: null, loc_status: "idle", cam_status: "idle", image_error: null, seq: 0 };
+  var $ = function (id) { return document.getElementById(id); };
+  var stream = null;
+
+  // ---- Streamlit component protocol (no library needed): ready, frame height, value
+  function post(type, data) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*"); }
+  function height() { post("streamlit:setFrameHeight", { height: Math.max(120, document.documentElement.scrollHeight + 6) }); }
+  function emit() { state.seq += 1; post("streamlit:setComponentValue", { value: JSON.parse(JSON.stringify(state)), dataType: "json" }); height(); }
+  window.addEventListener("message", function (e) { if (e.data && e.data.type === "streamlit:render") { height(); } });
+  post("streamlit:componentReady", { apiVersion: 1 });
+  if (window.ResizeObserver) { new ResizeObserver(height).observe(document.body); }
+
+  function say(id, text, kind) { var el = $(id); el.textContent = text || ""; el.className = "status " + (kind || ""); }
+
+  // ---- location: the browser's own geolocation, asked only when the person presses the button
+  function locate() {
+    state.loc_status = "pending"; say("loc-status", "Waiting for your device to give its position...", "warn"); emit();
+    if (!navigator.geolocation) { return failLoc("unsupported", "This browser cannot give out a GPS position."); }
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      state.lat = pos.coords.latitude; state.lon = pos.coords.longitude; state.accuracy_m = pos.coords.accuracy; state.loc_status = "ok";
+      say("loc-status", "Location received (accurate to about " + Math.round(pos.coords.accuracy) + " m).", "ok"); emit();
+    }, function (err) {
+      var secure = window.isSecureContext !== false;
+      if (err && err.code === 1) { failLoc(secure ? "denied" : "insecure", secure ? "Location permission was denied." : "Location needs a secure page (https:// or localhost)."); }
+      else if (err && err.code === 3) { failLoc("timeout", "Finding your position took too long."); }
+      else { failLoc("unavailable", "Your device could not determine its position."); }
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  }
+  function failLoc(code, text) {
+    state.lat = state.lon = state.accuracy_m = null; state.loc_status = code; say("loc-status", text, "bad"); emit();
+  }
+
+  // ---- photo: scaled to MAX_SIDE and re-encoded as JPEG in the browser (this also drops the camera's metadata)
+  function setImage(canvas) {
+    var url = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+    state.image = url; state.image_error = null; state.cam_status = state.cam_status === "streaming" ? "ok" : state.cam_status;
+    $("preview").src = url; $("preview").hidden = false; $("retake-row").hidden = false;
+    say("photo-status", "Photo ready (" + Math.round(url.length * 0.75 / 1024) + " KB).", "ok"); emit();
+  }
+  function drawScaled(source, w, h) {
+    var scale = Math.min(1, MAX_SIDE / Math.max(w, h)), c = $("canvas");
+    c.width = Math.max(1, Math.round(w * scale)); c.height = Math.max(1, Math.round(h * scale));
+    c.getContext("2d").drawImage(source, 0, 0, c.width, c.height);
+    return c;
+  }
+  function fail(code, text) { state.image = null; state.image_error = code; $("preview").hidden = true; say("photo-status", text, "bad"); emit(); }
+
+  function fromFile(file) {
+    if (!file) { return; }
+    if (file.size > MAX_FILE_BYTES) { return fail("image_too_large", "That photo is too large. Try a smaller photo."); }
+    var done = function (src, w, h) { try { setImage(drawScaled(src, w, h)); } catch (e) { fail("unsupported_image", "This photo cannot be used."); } };
+    if (window.createImageBitmap) {
+      createImageBitmap(file, { imageOrientation: "from-image" }).then(function (bmp) { done(bmp, bmp.width, bmp.height); },
+        function () { viaImage(file, done); });
+    } else { viaImage(file, done); }
+  }
+  function viaImage(file, done) {
+    var url = URL.createObjectURL(file), img = new Image();
+    img.onload = function () { done(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(url); };
+    img.onerror = function () { URL.revokeObjectURL(url); fail("unsupported_image", "This photo cannot be used."); };
+    img.src = url;
+  }
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    $("video").hidden = true; $("cam-actions").hidden = true;
+  }
+  function openCamera() {
+    var md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia || window.isSecureContext === false) {   // no live camera on this page: use the phone's own camera app instead
+      say("photo-status", "Opening your device's camera app...", "warn"); $("file-camera").click(); return;
+    }
+    md.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false }).then(function (s) {
+      stream = s; var v = $("video"); v.srcObject = s; v.hidden = false; $("cam-actions").hidden = false; v.play();
+      state.cam_status = "streaming"; say("photo-status", "Point the camera at the traffic, then press Take photo.", ""); emit();
+    }).catch(function (err) {
+      var name = err && err.name;
+      if (name === "NotAllowedError" || name === "SecurityError") { state.cam_status = "camera_denied"; say("photo-status", "Camera permission was denied. You can choose an existing photo instead.", "bad"); }
+      else { state.cam_status = "camera_unavailable"; say("photo-status", "No usable camera was found. You can choose an existing photo instead.", "bad"); }
+      emit();
+    });
+  }
+  function snap() {
+    var v = $("video"); if (!v.videoWidth) { return; }
+    var c = drawScaled(v, v.videoWidth, v.videoHeight); stopCamera(); setImage(c);
+  }
+
+  $("btn-loc").addEventListener("click", locate);
+  $("btn-camera").addEventListener("click", openCamera);
+  $("btn-choose").addEventListener("click", function () { $("file-choose").click(); });
+  $("btn-snap").addEventListener("click", snap);
+  $("btn-cancel").addEventListener("click", function () { stopCamera(); state.cam_status = "idle"; say("photo-status", "", ""); emit(); });
+  $("btn-retake").addEventListener("click", function () {
+    state.image = null; $("preview").hidden = true; $("retake-row").hidden = true; say("photo-status", "", ""); emit();
+  });
+  ["file-choose", "file-camera"].forEach(function (id) {
+    $(id).addEventListener("change", function (e) { fromFile(e.target.files && e.target.files[0]); e.target.value = ""; });
+  });
+  window.addEventListener("pagehide", stopCamera);
+  emit();
+})();
+</script>
+</body>
+</html>

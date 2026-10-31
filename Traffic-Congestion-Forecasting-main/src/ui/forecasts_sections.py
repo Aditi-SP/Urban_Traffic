@@ -305,11 +305,13 @@ def render():
     df = get_data()
     span = (f"the historical dataset ({df[fd.DATE_COL].min():%Y-%m-%d} to {df[fd.DATE_COL].max():%Y-%m-%d}, "
             f"{(dt.date.today() - df[fd.DATE_COL].max().date()).days} days before today)" if df is not None else "the historical dataset")
-    theme.callout(f"<b>How to read this page.</b> Everything here replays {span}: historical results, "
-                  "not live traffic and not validated 2026 forecasts. <b>The LSTM and XGBoost models are experimental:</b> on the "
-                  "held-out test set (2024-03-21 to 2024-08-09) neither beat the simple per-road historical-mean baseline, and that "
-                  "evaluation does not show that either model predicts day-to-day changes in congestion. Recent real-world "
-                  "performance has not been established: the dataset ends on 2024-08-09.")
+    with st.expander("About the data and models"):
+        st.markdown(
+            f"- **Historical data:** everything on this page replays {span}. It is not live traffic and not a validated 2026 forecast.\n"
+            "- **The LSTM and XGBoost models are experimental.**\n"
+            "- **Neither model outperformed the simple per-road historical-mean baseline** on the held-out test set (2024-03-21 to 2024-08-09), "
+            "and that evaluation does not show that either model predicts day-to-day changes in congestion.\n"
+            "- **Recent real-world performance has not been established:** the dataset ends on 2024-08-09.")
     xgb_model, lstm_ready = ensure_ready()
     render_demo(xgb_model, lstm_ready)
     render_data_status()

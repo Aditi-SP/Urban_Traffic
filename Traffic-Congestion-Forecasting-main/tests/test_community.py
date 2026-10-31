@@ -238,7 +238,7 @@ class PageTests(unittest.TestCase):
         self.assertIn("No sample reports exist", text)
         self.assertNotIn("tc-card tc-info tc-tight", text, "no report cards may exist")
         self.assertFalse(h.path.exists(), "viewing must not create the database")
-        self.assertEqual([b.label for b in h.at.button], ["Send report"], "no edit, delete or upload controls")
+        self.assertEqual([b.label for b in h.at.button], ["Report Traffic with Photo", "Send report"], "the photo-report button and the text form; no edit or delete controls")
         for kind in ("file_uploader", "camera_input"):
             self.assertEqual(len(h.at.get(kind)), 0)
 

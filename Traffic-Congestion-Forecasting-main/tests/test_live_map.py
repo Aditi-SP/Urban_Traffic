@@ -781,73 +781,77 @@ class LiveMapPageTests(unittest.TestCase):
         self.assertEqual(snapshot() - before, set())
 
 
-class SidebarFollowsTheLatestFetchTests(unittest.TestCase):
-    """D4: the sidebar status chip used to be drawn BEFORE the page ran, so it showed the state from before a fetch and lagged one interaction
-    behind. These run the real router (app.py): the chip must already reflect a fetch in the SAME run that performed it."""
+def page_text(h):
+    """Everything the page shows as text (main area only), as one string."""
+    out = []
+    for group in (h.at.markdown, h.at.caption, h.at.info, h.at.warning, h.at.error, h.at.success):
+        out += [e.value for e in group]
+    return " ".join(out)
+
+
+PROVIDER_WARNING_PHRASES = ("Key found, not tested", "key found, not yet tested", "A key is configured, but no request", "Traffic provider")
+
+
+class ProviderStatusHonestyTests(unittest.TestCase):
+    """The System Status sidebar and the 'Traffic provider: key found, not tested' panel are gone. The page says nothing about the provider until a REAL
+    request has been made: then a concise error after a failure, and a success indicator only after a success. Runs the real router (app.py)."""
 
     def harness(self, **kw):
         h = PageHarness(script=APP, **kw).start()
         self.addCleanup(h.stop)
         return h
 
-    @staticmethod
-    def chip(h):
-        return " ".join(m.value for m in h.at.sidebar.markdown if "Live traffic:" in m.value)
-
-    def test_a_key_that_was_never_used_reads_not_yet_tested(self):
+    def test_the_sidebar_has_no_system_status_and_no_diagnostics_panel(self):
         h = self.harness(key=KEY)
         self.assertEqual([e.value for e in h.at.exception], [])
-        self.assertIn("Live traffic: key found, not yet tested", self.chip(h))
+        side = " ".join(m.value for m in h.at.sidebar.markdown) + " ".join(c.value for c in h.at.sidebar.caption)
+        for gone in ("System status", "Live traffic:", "Data: historical", "Models: not validated", "Reports: working", "Diagnostics"):
+            self.assertNotIn(gone, side)
+        self.assertEqual([e.label for e in h.at.sidebar.expander], [])
+        self.assertEqual([b.label for b in h.at.sidebar.button], [])
 
-    def test_a_successful_fetch_is_in_the_chip_in_the_same_run(self):
+    def test_no_provider_warning_is_shown_before_any_request(self):
+        h = self.harness(key=KEY)
+        text = page_text(h)
+        for phrase in PROVIDER_WARNING_PHRASES:
+            self.assertNotIn(phrase, text)
+        self.assertNotIn("Live traffic: last response OK", text, "no success is claimed before a real request has succeeded")
+        self.assertEqual(h.net, [], "opening the page makes no provider request")
+
+    def test_a_success_indicator_appears_only_after_a_real_provider_response(self):
         h = self.harness(key=KEY).search("silk board junction").choose(0)
-        self.assertIn("not yet tested", self.chip(h), "nothing has been fetched yet")
-        h.fetch()                                               # ONE interaction: the fetch
+        self.assertNotIn("Live traffic: last response OK", page_text(h))
+        h.fetch()
         self.assertEqual(len(h.tomtom_calls()), 1)
-        chip = self.chip(h)
-        self.assertIn("Live traffic: last response OK", chip)   # before the fix this still said 'not yet tested'
-        self.assertNotIn("not yet tested", chip)
-        diag = " ".join(m.value for m in h.at.sidebar.expander[0].markdown) + " ".join(c.value for c in h.at.sidebar.expander[0].caption)
-        self.assertIn("The last valid provider response was received at", diag)
-        self.assertIn("this run has made 1 provider request(s)", diag)
+        self.assertIn("Live traffic: last response OK", page_text(h))
+        for phrase in PROVIDER_WARNING_PHRASES:
+            self.assertNotIn(phrase, page_text(h))
 
-    def test_a_failed_fetch_is_in_the_chip_in_the_same_run(self):
-        h = self.harness(key=KEY, tomtom_outcome=FakeResp(401, {})).search("silk board junction").choose(0).fetch()
-        chip = self.chip(h)
-        self.assertIn("Live traffic: provider problem", chip)
-        self.assertNotIn("not yet tested", chip)
-        self.assertNotIn("last response OK", chip)
+    def test_a_failed_request_shows_a_concise_error_and_never_a_success(self):
+        h = self.harness(key=KEY, tomtom_outcome=FakeResp(401, REC_BAD_KEY)).search("silk board junction").choose(0).fetch()
+        self.assertIn("missing valid authentication credentials", " ".join(e.value for e in h.at.error))
+        self.assertNotIn("last response OK", page_text(h))
         self.assertEqual(len(h.specs[-1]["lines"]), 0, "a failed fetch draws no traffic")
+        self.assertLessEqual(len(" ".join(e.value for e in h.at.error)), 400, "the error is concise")
 
-    def test_a_failed_refresh_after_a_success_shows_the_problem_and_keeps_the_last_valid_time(self):
+    def test_a_failed_refresh_after_a_success_is_reported_and_the_old_reading_stays_aged(self):
         h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
-        self.assertIn("last response OK", self.chip(h))
+        self.assertIn("last response OK", page_text(h))
         h.tomtom_outcome = requests.Timeout("slow")
         h.service.min_refresh = 0
         h.fetch()
-        self.assertIn("Live traffic: provider problem", self.chip(h))
-        diag = " ".join(m.value for m in h.at.sidebar.expander[0].markdown)
-        self.assertIn("The last valid response was at", diag)   # the stale reading's own time is still reported
+        self.assertIn("did not answer in time", " ".join(w.value for w in h.at.warning))
+        self.assertNotIn("last response OK", page_text(h), "the header no longer claims success once the latest request failed")
         self.assertEqual(len(h.specs[-1]["lines"]), 1)
 
-    def test_a_refresh_refused_by_the_30_second_limit_does_not_change_the_status(self):
+    def test_a_refresh_refused_by_the_30_second_limit_makes_no_new_request(self):
         h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
-        before = self.chip(h)
-        h.fetch()                                               # refused by the shared limit: no new request
+        h.fetch()
         self.assertEqual(len(h.tomtom_calls()), 1)
-        self.assertEqual(self.chip(h), before)
 
-    def test_the_status_stays_under_the_navigation_and_is_drawn_once(self):
+    def test_the_key_is_not_on_the_page(self):
         h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
-        headings = [m.value for m in h.at.sidebar.markdown if "System status" in m.value]
-        self.assertEqual(len(headings), 1, "the sidebar status must be drawn exactly once per run")
-        self.assertEqual([e.value for e in h.at.exception], [])
-        self.assertEqual([e.label for e in h.at.sidebar.expander], ["Diagnostics (files, models, data)"])
-
-    def test_the_key_is_not_in_the_sidebar(self):
-        h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
-        side = " ".join(m.value for m in h.at.sidebar.markdown) + " ".join(c.value for c in h.at.sidebar.caption)
-        self.assertNotIn(KEY, side)
+        self.assertNotIn(KEY, page_text(h) + " ".join(m.value for m in h.at.sidebar.markdown))
 
 
 class RecordedUi:
@@ -879,45 +883,24 @@ class RecordedUi:
 
 
 class LoadingStateTests(unittest.TestCase):
-    """The sidebar says which status it is showing while a run is busy, and a slow operation says what it is doing. The line never outlives the run."""
+    """A slow operation says what it is doing (a spinner with its own text)."""
 
     def harness(self, **kw):
         h = PageHarness(script=APP, **kw).start()
         self.addCleanup(h.stop)
         return h
 
-    def test_the_first_run_says_checking_and_later_runs_say_the_status_is_from_the_previous_action(self):
-        with RecordedUi() as ui:
-            h = self.harness(key=KEY)
-            first = [c for c in ui.captions if c.startswith(("Checking", "Updating"))]
-            self.assertEqual(first, ["Checking..."])
-            ui.captions.clear()
-            h.search("silk board junction")                      # a later run of the same session
-        later = [c for c in ui.captions if c.startswith(("Checking", "Updating"))]
-        self.assertEqual(later, ["Updating... the status below is from the previous action."])
-
-    def test_the_loading_line_is_gone_when_the_run_has_finished(self):
-        h = self.harness(key=KEY).search("silk board junction").choose(0).fetch()
-        side = " ".join(c.value for c in h.at.sidebar.caption)
-        self.assertNotIn("Updating", side)
-        self.assertNotIn("Checking", side)
-        self.assertIn("Live traffic: last response OK", " ".join(m.value for m in h.at.sidebar.markdown))   # and the status is the fresh one
-
-    def test_a_page_that_crashes_still_gets_a_fresh_status_and_no_leftover_loading_line(self):
+    def test_a_page_that_crashes_is_reported_not_hidden(self):
         def crashing_pages(st_):
             def broken():
                 raise RuntimeError("deliberate failure of a test page")
             return [st_.Page(broken, title="Live Traffic Map", url_path="live-map", default=True)]
         from src.ui import navigation
-        with mock.patch.object(navigation, "build_pages", crashing_pages), mock.patch.dict(os.environ), \
-                mock.patch.object(tomtom, "SERVICE", tomtom.FlowService()):
+        with mock.patch.object(navigation, "build_pages", crashing_pages), mock.patch.dict(os.environ), mock.patch.object(tomtom, "SERVICE", tomtom.FlowService()):
             os.environ["TOMTOM_API_KEY"] = KEY
             at = AppTest.from_file(APP, default_timeout=120).run()
-        self.assertTrue(any("deliberate failure" in e.value for e in at.exception), "the page's own error is still reported, not hidden")
-        self.assertIn("System status", " ".join(m.value for m in at.sidebar.markdown))
-        self.assertIn("Live traffic: key found, not yet tested", " ".join(m.value for m in at.sidebar.markdown))
-        self.assertNotIn("Updating", " ".join(c.value for c in at.sidebar.caption))
-        self.assertNotIn("Checking", " ".join(c.value for c in at.sidebar.caption))
+        self.assertTrue(any("deliberate failure" in e.value for e in at.exception), "the page's own error is still reported")
+        self.assertEqual([m.value for m in at.sidebar.markdown], [], "and there is no status panel left behind")
 
     def test_a_place_search_shows_that_it_is_searching(self):
         with RecordedUi() as ui:

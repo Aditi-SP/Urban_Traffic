@@ -18,12 +18,14 @@ from dataclasses import asdict
 
 import streamlit as st
 
+from src.community import photos
 from src.live import geo, geocode, tomtom
 from src.live import credentials
-from src.ui import health, leaflet_map, theme
+from src.ui import health, leaflet_map, photo_cards, theme
 from src.ui.common import METRICS_JSON, get_data, read_json
 
-LAYERS = ["Traffic segment", "Selected place"]
+LAYERS = ["Traffic segment", "Selected place", "Community photos"]
+MAX_PHOTO_MARKERS = 20   # photos drawn on the map at once (each carries a small thumbnail)
 MAP_HEIGHT = 500
 SEVERITY = {"no_key": "error", "auth": "error", "forbidden": "error", "quota": "warning", "invalid_response": "error", "unexpected_status": "error", "no_segment": "info",
             "timeout": "warning", "network": "warning", "server": "warning", "rate_limited": "warning", "budget": "warning", "throttled": "info"}
@@ -42,10 +44,14 @@ def age_text(seconds: float) -> str:
     return f"{int(seconds)} s ago" if seconds < 90 else f"{seconds / 60:.0f} min ago"
 
 
-def build_map_spec(selected, obs, layers, now=None) -> dict:
-    """What the map shows. With nothing selected there are no markers and no lines: it is just the basemap."""
+def build_map_spec(selected, obs, layers, now=None, community=(), radius_km=None) -> dict:
+    """What the map shows. With nothing selected there are no markers and no lines: it is just the basemap.
+
+    `community` is a list of photos.NearbyPhoto (fresh reports within the radius). They are drawn as purple camera markers and the searched area as a dashed
+    circle; the provider's traffic stays a coloured line, so the two sources can never be mistaken for one another.
+    """
     now = time.time() if now is None else now
-    markers, lines, bounds = [], [], None
+    markers, lines, circles, bounds = [], [], [], None
     center, zoom = list(geo.BENGALURU_CENTER), 11
 
     if selected and "Selected place" in layers:
@@ -62,7 +68,17 @@ def build_map_spec(selected, obs, layers, now=None) -> dict:
                    f"{obs.speed_ratio:.0%} of free-flow ({BAND_TEXT[b][0]})<br>Last fetched: {clock_text(obs.fetched_at)} "
                    "(this computer's clock)<br>Provider measurement time: not provided")
         lines.append({"points": pts, "color": BAND_TEXT[b][2], "tooltip": tooltip})
-    return leaflet_map.build_spec(center, zoom, markers, lines, bounds)
+    if selected and "Community photos" in layers and radius_km:
+        circles.append({"lat": selected["lat"], "lon": selected["lon"], "radius_m": float(radius_km) * 1000, "color": "#8B5CF6"})
+        shown = [photo_cards.marker_for(i, now) for i in list(community)[:MAX_PHOTO_MARKERS]]
+        markers += shown
+        if shown:   # make sure the reports are in view, together with the place (and the provider's segment, if there is one)
+            pts = [(selected["lat"], selected["lon"])] + [(m["lat"], m["lon"]) for m in shown]
+            if obs is not None and "Traffic segment" in layers:
+                pts += [tuple(p) for p in obs.segment]
+            lats, lons = [q[0] for q in pts], [q[1] for q in pts]
+            bounds = [[min(lats), min(lons)], [max(lats), max(lons)]]
+    return leaflet_map.build_spec(center, zoom, markers, lines, bounds, circles)
 
 
 # ------------------------------------------------------------------------------------------------ actions
@@ -178,9 +194,6 @@ def _card(*a):
 def _panel(has_key, sel, obs, now):
     """Right-hand column: provider status, chosen place, the reading (with its age) and the actions."""
     theme_cards = []
-    prov = health.provider_item(has_key, tomtom.SERVICE.status(), now)
-    theme_cards.append(_card("Traffic provider", prov.value, ("Add a key to see traffic (see the message above). The map and search work without it." if not has_key
-                                                              else prov.summary), health.KIND[prov.state] if prov.state != "ok" else "ok"))
     theme_cards.append(_card("Selected place", (sel["name"][:38] + "...") if sel and len(sel["name"]) > 38 else (sel["name"] if sel else "None"),
                                        f"{sel['lat']:.5f}, {sel['lon']:.5f}  |  " + ("typed by you" if sel["category"] == "manual" else "OpenStreetMap search, chosen by you")
                                        if sel else "Search for a place and choose a result.", "info" if sel else "mute"))
@@ -246,18 +259,24 @@ def _overview(now):
     """Homepage strip: only verified status, with links to the detail pages. Nothing here is a live measurement or a forecast."""
     items = {i.key: i for i in health.collect(now)}
     theme.section("At a glance", "Verified status only. Open a page for the details.")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
+    try:
+        n_fresh, note = photos.count_fresh(now=now), None
+    except (photos.PhotoError, Exception):  # noqa: BLE001  a storage problem must never break the map page
+        n_fresh, note = None, "The photo reports could not be read."
+    mins = photos.fresh_seconds() / 60
+    c1.markdown(_card("Community photos", "Unavailable" if n_fresh is None else f"{n_fresh} fresh",
+                      note or f"Photo reports from the last {mins:g} minutes. Search a place to see the ones near it.", "mute" if not n_fresh else "info"),
+                unsafe_allow_html=True)
+    with c1:
+        _link("src/ui/pages/community.py", "Community Reports")
     kind = lambda i: health.KIND[i.state] if i.state != "ok" else "ok"
-    c1.markdown(_card("Live traffic", items["provider"].value, items["provider"].summary[:170], kind(items["provider"])), unsafe_allow_html=True)
     c2.markdown(_card("Historical data", items["data"].value, items["data"].summary[:170], kind(items["data"])), unsafe_allow_html=True)
     with c2:
         _link("src/ui/pages/forecasts.py", "Traffic Forecasts")
     c3.markdown(_card("Models", items["models"].value, _model_note(), "warn" if items["models"].state != "bad" else "bad"), unsafe_allow_html=True)
     with c3:
         _link("src/ui/pages/performance.py", "Model Insights")
-    c4.markdown(_card("Community reports", items["community"].value, items["community"].summary[:170], kind(items["community"])), unsafe_allow_html=True)
-    with c4:
-        _link("src/ui/pages/community.py", "Community Reports")
 
 
 SETUP_COMMANDS = """$secure = Read-Host "Paste your TomTom key (input is hidden)" -AsSecureString
@@ -280,32 +299,75 @@ def _setup_notice(cred):
             st.markdown("**Why it was not found:** " + cred.hint_text())
 
 
+def _nearby_for(sel, radius, now):
+    """(fresh photos within the radius of the chosen place, error text or None). Distance, never the place name, decides."""
+    if not sel:
+        return [], None
+    try:
+        return photos.nearby(sel["lat"], sel["lon"], radius, now=now), None
+    except Exception:  # noqa: BLE001  never break the map because the photo store has a problem
+        return [], "Community photos could not be read right now."
+
+
+@st.fragment(run_every=photos.refresh_seconds())
+def _map_and_photos():
+    """The map with its community photo markers, and the photo list under it. Only this part reruns on the timer: the search, the provider reading and
+    the rest of the page are not reloaded. The server clock decides what is fresh, so a photo disappears from here when it expires."""
+    sel, obs, now = S.get("lm_selected"), S.get("lm_obs"), time.time()
+    layers = S.get("lm_layers") or []
+    radius = float(S.get("lm_photo_radius") or photos.radius_km())
+    found, problem = _nearby_for(sel, radius, now)
+    leaflet_map.show(build_map_spec(sel, obs, layers, now, community=found, radius_km=radius), MAP_HEIGHT)
+    parts = ["Map: © OpenStreetMap contributors (ODbL)"]
+    if S.get("lm_results"):
+        parts.append(geocode.ATTRIBUTION)
+    if obs is not None:
+        parts.append(tomtom.ATTRIBUTION)
+    st.caption("  |  ".join(parts))
+    st.caption("Two different sources: the coloured line is TomTom traffic (provider). Purple camera markers are photos from road users: unverified, and shown only while fresh.")
+    theme.legend_bands("Colour bands are this app's display convention (current speed as a share of free-flow speed: free-flowing "
+                       "80% or more, slow 50-80%, congested below 50%). They are not provider categories and not validated.")
+    st.slider("Community photo radius (km)", 0.5, 10.0, value=min(10.0, max(0.5, radius)), step=0.5, key="lm_photo_radius",
+              help="Photos within this distance of the place you chose are shown. The default is set by COMMUNITY_PHOTO_RADIUS_KM.")
+    if problem:
+        st.warning(problem)
+    elif not sel:
+        st.caption("Choose a place to see recent community photos near it.")
+    elif not found:
+        st.info("No recent community traffic reports for this area.")
+    else:
+        st.markdown(f"**Community photos within {radius:g} km of {html.escape(str(sel['name'])[:60])}** ({len(found)} fresh)")
+        for item in found[:8]:
+            with st.container(border=True):
+                photo_cards.photo_card(item.report, now=now, distance_km=item.distance_km)
+
+
 def render():
     cred = credentials.load()
     has_key = cred.configured
     obs, sel = S.get("lm_obs"), S.get("lm_selected")
-    chip = (("Traffic provider key found", "warn") if has_key else ("Live traffic not configured", "bad"))
-    theme.page_header("Live Traffic Map", "Search a place in Bengaluru; traffic appears only from a real provider response",
-                      chips=[chip, ("Map: OpenStreetMap", "mute")], compact=True)
-
+    header = st.container()   # reserved here, filled AFTER the fetch below, so the chip reflects the request made in THIS run (not the previous one)
     if not has_key:
         _setup_notice(cred)
     layers = _controls()
     if S.pop("lm_fetch_req", False) and has_key:
         _do_fetch(cred.key)
     obs, sel, now = S.get("lm_obs"), S.get("lm_selected"), time.time()
+    with header:
+        chips = [("Map: OpenStreetMap", "mute"), (f"Community photos: fresh for {photos.fresh_seconds() / 60:g} min", "info")]
+        if not has_key:
+            chips.insert(0, ("Live traffic not configured", "bad"))
+        else:   # a status chip only after a REAL provider response: never "ready" or "OK" for a key that has not been used
+            st_ = tomtom.SERVICE.status()
+            ok_at, err = st_.get("last_success_at"), st_.get("last_error")
+            if ok_at and not (err and err[1] >= ok_at):
+                chips.insert(0, (f"Live traffic: last response OK {clock_text(ok_at)}", "ok"))
+        theme.page_header("Live Traffic Map", "Search a place in Bengaluru; traffic appears only from a real provider response", chips=chips, compact=True)
+
 
     map_col, panel_col = st.columns([7, 3], gap="medium")
     with map_col:
-        leaflet_map.show(build_map_spec(sel, obs, layers, now), MAP_HEIGHT)
-        parts = ["Map: © OpenStreetMap contributors (ODbL)"]
-        if S.get("lm_results"):
-            parts.append(geocode.ATTRIBUTION)
-        if obs is not None:
-            parts.append(tomtom.ATTRIBUTION)
-        st.caption("  |  ".join(parts))
-        theme.legend_bands("Colour bands are this app's display convention (current speed as a share of free-flow speed: free-flowing "
-                           "80% or more, slow 50-80%, congested below 50%). They are not provider categories and not validated.")
+        _map_and_photos()
     with panel_col:
         _panel(has_key, sel, obs, now)
 

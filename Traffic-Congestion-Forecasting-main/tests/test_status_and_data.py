@@ -278,30 +278,38 @@ class HomepageTests(unittest.TestCase):
         for needle in ("Read-Host", "-AsSecureString", 'SetEnvironmentVariable("TOMTOM_API_KEY"'):
             self.assertIn(needle, commands)
         self.assertNotIn(KEY, page + commands)
-        self.assertIn("Not configured", md(at))
+        self.assertIn("Live traffic not configured", md(at))      # the setup banner and the header chip: the one place that is still needed
+        self.assertNotIn("Traffic provider", md(at))                # the provider status card is gone
         self.assertTrue(next(b for b in at.button if b.label == "Get traffic for this place").disabled)
 
-    def test_with_a_key_there_is_no_banner_and_the_card_says_it_was_never_tested(self):
+    def test_with_a_key_there_is_no_banner_and_no_provider_status_before_a_request(self):
         at = self.run_page(key=KEY)
         self.assertEqual([w for w in at.warning if "not configured" in w.value], [])
-        text = md(at)
-        self.assertIn("Key found, not tested", text)
-        self.assertNotIn(KEY, text + alltext(at))
+        text = md(at) + alltext(at)
+        for phrase in ("Key found, not tested", "key found, not yet tested", "A key is configured, but no request", "Traffic provider", "last response OK"):
+            self.assertNotIn(phrase, text)
+        self.assertNotIn(KEY, text)
 
-    def test_the_provider_card_reports_what_the_shared_service_really_saw(self):
-        svc = tomtom.FlowService(fetcher=mock.Mock(side_effect=tomtom.ProviderError("auth", "x")), ttl=0)
+    def test_a_success_chip_needs_a_real_success_and_a_past_failure_is_not_shown_as_a_status_card(self):
+        failed = tomtom.FlowService(fetcher=mock.Mock(side_effect=tomtom.ProviderError("auth", "x")), ttl=0)
         with self.assertRaises(tomtom.ProviderError):
-            svc.get(12.9159, 77.6240, KEY)
-        text = md(self.run_page(key=KEY, service=svc))
-        self.assertIn("Provider problem", text)
-        self.assertIn("TomTom did not accept the key", text)
+            failed.get(12.9159, 77.6240, KEY)
+        text = md(self.run_page(key=KEY, service=failed))
+        self.assertNotIn("last response OK", text)
+        self.assertNotIn("Provider problem", text)   # the concise error appears when the request is made; there is no standing provider card
+        fetched = mock.Mock(side_effect=lambda lat, lon, key, **k: tomtom.parse_response(__import__("tests.test_live_map", fromlist=["x"]).flow_payload(), lat, lon, 1000.0))
+        ok = tomtom.FlowService(fetcher=fetched, ttl=0)
+        ok.get(12.9159, 77.6240, KEY)
+        self.assertIn("Live traffic: last response OK", md(self.run_page(key=KEY, service=ok)))
 
-    def test_the_at_a_glance_strip_has_four_verified_cards(self):
+    def test_the_at_a_glance_strip_has_three_verified_cards_and_no_provider_card(self):
         at = self.run_page()
         text = md(at)
         self.assertIn("At a glance", text)
-        for label in ("Live traffic", "Historical data", "Models", "Community reports"):
+        for label in ("Community photos", "Historical data", "Models"):
             self.assertIn(f'<div class="lbl">{label}</div>', text)
+        for gone in ("Live traffic", "Community reports"):
+            self.assertNotIn(f'<div class="lbl">{gone}</div>', text)
         self.assertIn("Latest 2024-08-09", text)
         self.assertIn("Experimental", text)
         self.assertEqual([e.value for e in at.exception], [])
@@ -322,13 +330,24 @@ class HomepageTests(unittest.TestCase):
         self.assertEqual([e.value for e in at.exception], [])
         self.assertIn("was not found, so no model figures are shown", md(at))
 
-    def test_the_community_card_counts_real_reports_only(self):
+    def test_the_community_photos_card_counts_fresh_photos_only(self):
+        import io
+        from PIL import Image
+        from src.community import photos
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db = Path(tmp.name) / "c.db"
-        self.assertIn("0 saved", md(self.run_page(db=db)))
-        store.submit("Accident", "Silk Board Junction", "A real test report with enough text.", session_id="s", path=db)
-        self.assertIn("1 saved", md(self.run_page(db=db)))
+        self.assertIn("0 fresh", md(self.run_page(db=db)))
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 150), (10, 120, 200)).save(buf, "JPEG")
+        store.submit("Accident", "Silk Board Junction", "A text report does not count as a photo.", session_id="s", path=db)
+        self.assertIn("0 fresh", md(self.run_page(db=db)))
+        photos.submit_photo(buf.getvalue(), 12.9159, 77.6240, "heavy", session_id="s", accuracy_m=20, path=db)
+        self.assertIn("1 fresh", md(self.run_page(db=db)))
+        other = io.BytesIO()
+        Image.new("RGB", (200, 150), (200, 60, 10)).save(other, "JPEG")      # a different picture (an identical one within the window is refused)
+        photos.submit_photo(other.getvalue(), 12.9159, 77.6240, "old", session_id="t", accuracy_m=20, now=1000.0, path=db)   # uploaded long ago: expired
+        self.assertIn("1 fresh", md(self.run_page(db=db)))
 
     def test_the_homepage_shows_no_traffic_values_and_no_forecasts(self):
         at = self.run_page()
@@ -344,24 +363,26 @@ class HomepageTests(unittest.TestCase):
 
 # ======================================================================================================== sidebar
 class SidebarTests(unittest.TestCase):
-    def test_the_sidebar_chips_are_the_real_health_items_not_fixed_text(self):
+    def test_the_sidebar_has_no_system_status_but_the_checks_behind_it_still_work(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {store.DB_ENV: str(Path(tmp) / "c.db")}):
             os.environ.pop("TOMTOM_API_KEY", None)
             at = AppTest.from_file(str(root_dir / "app.py"), default_timeout=300).run()
+            items = health.collect()          # the real checks are untouched: -CheckOnly, check_key and the tests use them
         self.assertEqual([e.value for e in at.exception], [])
         side = " ".join(m.value for m in at.sidebar.markdown)
-        for i in health.collect():
-            self.assertIn(i.chip.replace("&", "&amp;"), side) if i.key != "community" else None
-        self.assertIn("Live traffic: not configured", side)
-        self.assertEqual([e.label for e in at.sidebar.expander], ["Diagnostics (files, models, data)"])
-        self.assertNotIn("Files / Status", side)
+        for gone in ("System status", "Live traffic:", "Data: historical", "Models: not validated", "Reports: working", "Diagnostics", "Files / Status"):
+            self.assertNotIn(gone, side)
+        self.assertEqual([e.label for e in at.sidebar.expander], [])
+        self.assertEqual({i.key for i in items}, {"provider", "data", "models", "community"})
 
-    def test_with_a_key_the_sidebar_says_it_is_untested_and_the_key_is_not_shown(self):
+    def test_with_a_key_the_provider_health_item_is_still_computed_but_nothing_shows_it(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {store.DB_ENV: str(Path(tmp) / "c.db"), "TOMTOM_API_KEY": KEY}), \
                 mock.patch.object(tomtom, "SERVICE", tomtom.FlowService()):
             at = AppTest.from_file(str(root_dir / "app.py"), default_timeout=300).run()
-        text = " ".join(m.value for m in at.sidebar.markdown)
-        self.assertIn("Live traffic: key found, not yet tested", text)
+            item = next(i for i in health.collect() if i.key == "provider")
+        self.assertEqual(item.chip, "Live traffic: key found, not yet tested")   # kept for the preflight and the tests, never drawn in the UI
+        text = " ".join(m.value for m in at.sidebar.markdown) + " ".join(c.value for c in at.sidebar.caption)
+        self.assertNotIn("key found", text)
         self.assertNotIn(KEY, text)
 
 
@@ -419,7 +440,8 @@ class ForecastDataGapTests(unittest.TestCase):
 
     def test_the_page_never_claims_to_reach_2026_or_to_be_live(self):
         flat = " ".join(alltext(self.at).split())
-        self.assertIn("not live traffic and not validated 2026 forecasts", flat)
+        self.assertIn("About the data and models", [e.label for e in self.at.expander])      # the long warning is now a small expander with the same facts
+        self.assertIn("It is not live traffic and not a validated 2026 forecast", flat)
         self.assertNotIn("live forecast", flat.lower())
         self.assertNotRegex(flat, r"Forecast for [^.]*202[5-6]")
 

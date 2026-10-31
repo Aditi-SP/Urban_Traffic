@@ -6,7 +6,7 @@ What this is
     and are never used as model input, training data or evidence of an incident.
   * They are stored on THIS computer, in data/community/community.db (override with the COMMUNITY_DB_PATH environment variable).
     That folder is git-ignored. Anyone using the same running dashboard sees the same reports.
-  * Nothing here makes a network request. No photo upload exists (the earlier plan for photos is NOT implemented).
+  * Nothing here makes a network request. Photo reports (with GPS and a 10-minute freshness window) are in src/community/photos.py and share this database.
 
 Guarantees (each is covered by tests/test_community.py)
   * A report counts as saved only after the row has been committed AND read back from the database; otherwise a ReportError is raised.
@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 DB_ENV = "COMMUNITY_DB_PATH"
 DEFAULT_DB = ROOT / "data" / "community" / "community.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 1 = text reports; 2 = adds the photo_reports table (src/community/photos.py). Migrated only when something is WRITTEN, never by viewing.
 
 CATEGORIES = ("Heavy traffic", "Accident", "Road closure", "Roadwork", "Flooding or weather", "Signal fault", "Other")
 MIN_PLACE, MAX_PLACE = 3, 120
@@ -136,6 +136,31 @@ def _connect(path: Path, create: bool):
                 CREATE INDEX IF NOT EXISTS idx_reports_created ON reports (created_at);
                 CREATE INDEX IF NOT EXISTS idx_reports_submitter ON reports (submitter, created_at);
                 PRAGMA user_version = 1;
+                COMMIT;""")
+            version = 1
+        if create and version < 2:   # migration 1 -> 2: only a write may change the file; viewing an older database leaves it exactly as it is
+            con.executescript("""
+                BEGIN;
+                CREATE TABLE IF NOT EXISTS photo_reports (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    report_id      TEXT    NOT NULL UNIQUE,
+                    created_at     REAL    NOT NULL,
+                    created_at_utc TEXT    NOT NULL,
+                    expires_at     REAL    NOT NULL,
+                    latitude       REAL    NOT NULL,
+                    longitude      REAL    NOT NULL,
+                    accuracy_m     REAL,
+                    description    TEXT    NOT NULL DEFAULT '',
+                    image_file     TEXT,
+                    image_sha256   TEXT    NOT NULL,
+                    status         TEXT    NOT NULL DEFAULT 'unverified',
+                    token          TEXT    UNIQUE,
+                    submitter      TEXT    NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_photo_created ON photo_reports (created_at);
+                CREATE INDEX IF NOT EXISTS idx_photo_position ON photo_reports (latitude, longitude);
+                CREATE INDEX IF NOT EXISTS idx_photo_submitter ON photo_reports (submitter, created_at);
+                PRAGMA user_version = 2;
                 COMMIT;""")
     except BaseException:  # never leave a file handle open (a corrupt file raises here)
         con.close()

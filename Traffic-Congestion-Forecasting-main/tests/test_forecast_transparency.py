@@ -109,10 +109,11 @@ class ForecastPageWordingTests(unittest.TestCase):
     def test_the_models_are_described_as_experimental_and_not_better_than_the_baseline(self):
         text = texts(self.at)
         for needle in ("The LSTM and XGBoost models are experimental",
-                       "neither beat the simple per-road historical-mean baseline",
+                       "Neither model outperformed the simple per-road historical-mean baseline",
                        "does not show that either model predicts day-to-day changes",
-                       "performance has not been established: the dataset ends on 2024-08-09",
-                       "not live traffic and not validated 2026 forecasts"):
+                       "Recent real-world performance has not been established",
+                       "the dataset ends on 2024-08-09",
+                       "It is not live traffic and not a validated 2026 forecast"):
             self.assertIn(needle, text)
         self.assertIn("Experimental model output", text)
 

@@ -1,10 +1,9 @@
 """
-Section 4: Road & Incident Details.
+Section 4: Road History (it was "Road & Incident Details" while it still showed placeholders for live status and incidents; those are removed).
 
 What this page implements: the HISTORICAL profile of each road in the 2022-2024 dataset (computed from the real file), always labelled as
-historical. It reads no live data. Live speed, travel time and a closure flag for a SEARCHED place are on the Live Traffic Map page (TomTom
-Flow Segment Data); they are not linked to the dataset's roads, which have no coordinates. Incidents are NOT implemented anywhere: no
-incident source is connected (the provider's incidents API is not called) and community reports are separate and unverified.
+historical. It reads no live data. Live speed and travel time for a SEARCHED place are on the Live Traffic Map (TomTom Flow Segment Data);
+they are not linked to the dataset's roads, which have no coordinates. Incidents are not implemented anywhere, so none are shown.
 """
 import pandas as pd
 import plotly.express as px
@@ -19,22 +18,9 @@ WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", 
 
 def render():
     theme.page_header(
-        "Road & Incident Details",
-        "The 2022-2024 historical profile of each road in the dataset; live conditions for a place are on the Live Traffic Map",
-        chips=[("Live details: not on this page", "warn"), ("Incidents: not implemented", "warn"), ("History: 2022-2024 dataset", "info")])
-
-    theme.callout("<b>What this page shows:</b> the historical profile of the roads in the dataset (real records, not live conditions). "
-                  "<b>It reads no live data.</b> Live speed, travel time and closure for a place you search for are on the "
-                  "<b>Live Traffic Map</b> page (they need a TomTom key). <b>Incidents are not implemented:</b> no incident source is connected, "
-                  "and community reports are separate and unverified.")
-
-    theme.section("Live status", "Not shown on this page; the incident feed is not implemented")
-    theme.stat_cards([
-        {"label": "Speed vs free-flow", "value": "Not shown here", "kind": "mute", "note": "Shown for a searched place on the Live Traffic Map; not linked to these roads."},
-        {"label": "Travel time", "value": "Not shown here", "kind": "mute", "note": "Shown for a searched place on the Live Traffic Map; not linked to these roads."},
-        {"label": "Road closure", "value": "Not shown here", "kind": "mute", "note": "Shown as a flag for a searched place on the Live Traffic Map; not linked to these roads."},
-        {"label": "Incidents", "value": "Not implemented", "kind": "mute", "note": "No incident data source is connected. Community reports are unverified and listed on their own page."},
-    ])
+        "Road History",
+        "The 2022-2024 profile of each road in the dataset: real historical records, not live conditions and not incidents",
+        chips=[("History: 2022-2024 dataset", "info")])
 
     df = get_data()
     theme.section("Historical profile (dataset: 2022-01-01 to 2024-08-09)", "Real records from the dataset; not live conditions")

@@ -26,7 +26,7 @@ PAGES = [
     PageDef("live_map", "Live Traffic Map", ":material/map:", "src/ui/pages/live_map.py", "live-map", default=True),
     PageDef("forecasts", "Traffic Forecasts", ":material/trending_up:", "src/ui/pages/forecasts.py", "forecasts"),
     PageDef("community", "Community Reports", ":material/forum:", "src/ui/pages/community.py", "community"),
-    PageDef("details", "Road & Incident Details", ":material/traffic:", "src/ui/pages/details.py", "details"),
+    PageDef("details", "Road History", ":material/traffic:", "src/ui/pages/details.py", "details"),
     PageDef("performance", "Model Insights", ":material/analytics:", "src/ui/pages/performance.py", "performance",
             full_title="Model Performance & Data Sources"),
 ]

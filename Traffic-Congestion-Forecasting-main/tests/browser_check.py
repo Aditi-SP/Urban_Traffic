@@ -154,7 +154,7 @@ async def main():
         await c.call("Page.enable")
         await c.call("Emulation.setDeviceMetricsOverride", width=W, height=H, deviceScaleFactor=1, mobile=False)
         NAV = '[data-testid="stSidebarNav"] a'
-        TITLES = ["Live Traffic Map", "Traffic Forecasts", "Community Reports", "Road & Incident Details", "Model Insights"]
+        TITLES = ["Live Traffic Map", "Traffic Forecasts", "Community Reports", "Road History", "Model Insights"]
         NO_FAKE_LIVE = ("live forecast", "live prediction", "real-time forecast")
 
         async def goto(label, needle, timeout=90):
@@ -165,10 +165,10 @@ async def main():
 
         # ---------------------------------------------------------- landing page: Live Traffic Map (shell)
         await c.call("Page.navigate", url=URL)
-        ok = await c.wait_text("Live traffic:", 120)   # the sidebar status chip, drawn after the page has run
+        ok = await c.wait_text("Community photos", 120)   # the header chips of the Live Traffic Map
         await c.settle()
         t = await c.text()
-        configured = "Live traffic: not configured" not in (await c.js(SIDEBAR_JS) or "")
+        configured = "Live traffic not configured" not in (await c.js(MAIN_JS) or "")
         print(f"   scenario under test: TomTom key {'CONFIGURED' if configured else 'NOT configured'} in this dashboard "
               "(read from its own sidebar; the key itself is never read into this output)", flush=True)
         check("app loads in Chrome and lands on the Live Traffic Map", ok and "Live Traffic Map" in t)
@@ -213,15 +213,17 @@ async def main():
         check("live map: Plot Controls are not shown here", "Plot Controls" not in t)
         check("live map: search form present and a map above the fold", await c.js("(() => { const r = document.querySelector('iframe').getBoundingClientRect(); return r.top < " + str(H) + " && r.height > 300; })()"))
         side_t = await c.js(SIDEBAR_JS) or ""
-        provider_ok = any(chip in side_t for chip in PROVIDER_CHIPS_WITH_KEY) if configured else "Live traffic: not configured" in side_t
-        provider_chip = next((chip for chip in PROVIDER_CHIPS_WITH_KEY if chip in side_t), "not configured" if "Live traffic: not configured" in side_t else "?")
-        check("sidebar System status shows the REAL status of each part (live traffic for this scenario / historical data with its latest date / models / reports)",
-              provider_ok and "Data: historical, 2022-2024 (latest 2024-08-09)" in side_t and "Models: not validated for 2026" in side_t and "Reports: working" in side_t,
-              provider_chip)
-        nav_bottom = await c.js("(() => { const n = document.querySelector('[data-testid=\"stSidebarNav\"]'); return n ? n.getBoundingClientRect().bottom : null; })()")
-        status_top = await c.js("(() => { const h = [...document.querySelectorAll('[data-testid=\"stSidebar\"] h2')].find(e => e.innerText.includes('System status')); return h ? h.getBoundingClientRect().top : null; })()")
-        check("sidebar: the status is drawn once and sits below the page navigation (it is now drawn after the page runs)",
-              side_t.count("System status") == 1 and nav_bottom is not None and status_top is not None and status_top >= nav_bottom - 2, f"nav bottom {nav_bottom}, status top {status_top}")
+        check("the sidebar is navigation only: no System status chips and no Diagnostics panel",
+              not any(w in side_t for w in ("System status", "Live traffic:", "Data: historical", "Models: not validated", "Reports: working", "Diagnostics"))
+              and await c.js("document.querySelectorAll('[data-testid=\"stSidebar\"] details').length") == 0,
+              " | ".join(side_t.split())[:100])
+        main_now = await c.js(MAIN_JS) or ""
+        check("no provider warning before any request: no 'Traffic provider' panel, no 'key found, not tested' text, no success claim",
+              not any(w in main_now for w in ("Traffic provider", "Key found, not tested", "key found, not yet tested", "A key is configured, but no request", "last response OK")),
+              "scenario: " + ("key configured" if configured else "no key"))
+        check("live map: the Road Details / Incident Details placeholders are not on the page", not any(w in main_now for w in ("Incident Details", "Road Details", "Not implemented", "Not shown here")))
+        check("live map: the community photo layer and the radius control are present, with the honest 'two sources' legend",
+              "Community photos" in main_now and "Community photo radius" in main_now and "Two different sources" in main_now and "Choose a place to see recent community photos near it." in main_now)
         if not configured:
             check("setup banner: says live traffic is not configured, names TOMTOM_API_KEY and points to the README",
                   "Live traffic is not configured." in t and "TOMTOM_API_KEY" in t and "README" in t)
@@ -246,64 +248,12 @@ async def main():
             check("key configured: nothing is requested on page load, and the traffic button stays disabled until a place is chosen",
                   await c.js("(() => { const b = [...document.querySelectorAll('button')].find(e => /Get traffic for this place|Refresh traffic/.test(e.innerText)); return !!b && b.disabled; })()")
                   and "Choose a place first" in main_t)
-        check("homepage 'At a glance' strip shows live traffic, data freshness, models and community reports",
-              all(k in t.lower() for k in ("at a glance", "live traffic", "historical data", "latest 2024-08-09", "community reports")))  # card labels are upper-cased by CSS
+        check("homepage 'At a glance' strip shows community photos, data freshness and models (no provider card)",
+              all(k in t.lower() for k in ("at a glance", "community photos", "historical data", "latest 2024-08-09", "models")) and "TRAFFIC PROVIDER" not in t.upper())  # labels are upper-cased by CSS
         check("homepage models card quotes the saved held-out evaluation and says it is not validated for 2026",
               "Held-out test RMSE" in t and "Neither model beat the road mean." in t and "Not validated for 2026" in t)
         check("homepage links to the detail pages", await c.js("document.querySelectorAll('[data-testid=\"stPageLink\"], a[data-testid=\"stPageLink-NavLink\"]').length") >= 3)
         check("landing page makes no live-traffic or forecast claim before traffic is requested", "km/h" not in t.split("Colour bands")[0] and "Forecast for" not in t)
-        # Diagnostics (the old "Files / Status")
-        # open it by STATE, not by one blind click: a click that lands while the first script run is still finishing can be lost (seen once in 4 runs; 0 of 8 in a
-        # dedicated probe). The number of clicks needed is shown in the result so a recurring problem stays visible.
-        diag_is_open = "(() => { const d = [...document.querySelectorAll('[data-testid=\"stSidebar\"] details')].find(e => e.innerText.includes('Diagnostics (files')); return !!d && d.open; })()"
-        opened, clicks = False, 0
-        while clicks < 3 and not await c.js(diag_is_open):
-            clicks += 1
-            opened = await c.click_by_text("summary, [data-testid='stExpander'] summary", "Diagnostics (files, models, data)")
-            await c.settle()
-            await asyncio.sleep(1.0)
-        opened = bool(await c.js(diag_is_open))
-        td = await c.text()
-        check("sidebar Diagnostics opens and lists the real files and the same status items (replaces 'Files / Status')",
-              bool(opened) and "Files the dashboard reads" in td and "Dataset: present" in td and "Live traffic (TomTom)" in td and "Files / Status" not in td,
-              f"open after {clicks} click(s)")
-        check("Diagnostics shows no absolute local path", str(Path(__file__).resolve().parent.parent).replace("\\", "/") not in td.replace("\\", "/"))
-        key_line = next((l for l in td.splitlines() if l.startswith("TomTom key:")), "")
-        check("Diagnostics key line agrees with the sidebar chip, and says the value is not shown", ("TomTom key: configured" in key_line) == configured
-              and ("The value is not shown" in td if configured else "not configured" in key_line.lower()), key_line.split("(")[0].strip())
-        start_shown = re.search(r"This dashboard process started at (\d\d:\d\d:\d\d) and serves port (\d+)", td)
-        real_start = server_process_start(APP_PORT)
-        shown_epoch = clock_to_epoch(start_shown.group(1), real_start or time.time()) if start_shown else None
-        check("Diagnostics: the process start time is the operating system's creation time of the server process (within 2 s), not a later module-import time",
-              bool(start_shown) and real_start is not None and abs(shown_epoch - real_start) <= 2.0 and start_shown.group(2) == str(APP_PORT),
-              f"shown {start_shown.group(1) if start_shown else None}, OS says {time.strftime('%H:%M:%S', time.localtime(real_start)) if real_start else None}")
-        await c.click_by_text("button", "Check models load", exact=True)
-        ok_models = await c.wait_text("Both trained models loaded.", 180)
-        check("Diagnostics: 'Check models load' really loads the trained models and says so", ok_models)
-        await c.click_by_text("button", "Run preflight", exact=True)
-        # while the preflight runs (about 2 s) the sidebar must say that the status under it is still the previous one, and a spinner must say what is running
-        saw_updating = saw_spinner = False
-        t_end = time.time() + 120
-        while time.time() < t_end:
-            side_now = await c.js(SIDEBAR_JS) or ""
-            saw_updating = saw_updating or "Updating... the status below is from the previous action." in side_now
-            saw_spinner = saw_spinner or "Running the preflight checks..." in (await c.text() or "")
-            if "Preflight:" in side_now:
-                break
-            await asyncio.sleep(0.04)
-        ok_pre = "Preflight:" in (await c.text() or "")
-        await c.settle()
-        # The spinner is informational here: Streamlit shows st.spinner only for an operation that lasts longer than about half a second, so a fast, warm
-        # preflight may legitimately never show it (the spinner texts themselves are asserted in the unit tests, which record the real calls).
-        check("loading state: while the preflight runs the sidebar says its status is from the previous action",
-              saw_updating, f"'Updating' line seen: {saw_updating}; spinner seen: {saw_spinner} (shown only after about 0.5 s)")
-        idle_side = await c.js(SIDEBAR_JS) or ""
-        check("loading state: when the run has finished the 'Updating' line is gone and the status is complete again",
-              "Updating..." not in idle_side and "Checking..." not in idle_side and "System status" in idle_side and "Data: historical" in idle_side)
-        tp = await c.text()
-        line = next((l for l in tp.splitlines() if l.startswith("Preflight:")), "")
-        check("Diagnostics: 'Run preflight' runs the real preflight and reports its result (no FAIL)", ok_pre and "FAIL" not in line, line[:160])
-        await c.shot("01b_diagnostics")
         check("no error text on the landing page", not any(b in t for b in BAD_PRE))
         await c.shot("01_live_map")
 
@@ -315,8 +265,11 @@ async def main():
               and "What are you reporting?" in t and "Road or place" in t and "What did you see?" in t)
         check("Community Reports: honest empty state or real saved reports, never samples",
               "No community reports have been saved yet" in t or "unverified" in t.split("Recent reports")[-1])
-        check("Community Reports: no photo upload and no edit/delete control",
-              await c.js("document.querySelectorAll('input[type=file], [data-testid=\"stFileUploader\"], [data-testid=\"stCameraInput\"]').length") == 0
+        check("Community Reports: the prominent 'Report Traffic with Photo' button, the explanation, and the fresh-photo section (with its honest empty state)",
+              await c.js("[...document.querySelectorAll('button')].some(b=>b.innerText.includes('Report Traffic with Photo'))") and "Report traffic with a photo" in t
+              and "Recent community photos" in t and ("No recent community traffic reports." in t or "Fresh" in t), "")
+        check("Community Reports: no edit/delete control, and no Streamlit file uploader (the photo capture is its own component, tested by tests/browser_photo_check.py)",
+              await c.js("document.querySelectorAll('[data-testid=\"stFileUploader\"], [data-testid=\"stCameraInput\"]').length") == 0
               and not await c.js("[...document.querySelectorAll('button')].some(b=>/delete|edit|remove/i.test(b.innerText))"))
         await c.click_by_text("button", "Send report", exact=True)  # empty form: validated BEFORE any storage, so nothing is written
         ok_err = await c.wait_text("The road or place is too short", 30)
@@ -327,19 +280,15 @@ async def main():
         check("Plot Controls are hidden on pages that do not use them", "Plot Controls" not in t)
         await c.shot("02_community")
 
-        # ---------------------------------------------------------- Road & Incident Details
-        ok, t = await goto("Road & Incident Details", "What this page shows")
+        # ---------------------------------------------------------- Road History (was Road & Incident Details; its non-functional placeholders are gone)
+        ok, t = await goto("Road History", "Historical profile")
         main_t = await c.js(MAIN_JS) or ""
-        check("Road & Incident Details opens and says plainly that it reads no live data", ok and "It reads no live data" in main_t)
-        check("Road & Incident Details: live cards say 'Not shown here' (3: speed, travel time, closure) and incidents say 'Not implemented' (1)",
-              await c.js("[...document.querySelectorAll('.tc-card .val')].filter(e => e.innerText.trim()==='Not shown here').length") == 3
-              and await c.js("[...document.querySelectorAll('.tc-card .val')].filter(e => e.innerText.trim()==='Not implemented').length") == 1)
-        check("Road & Incident Details: points to the Live Traffic Map for live values and says incidents are not implemented and no incident source is connected",
-              "Live Traffic Map" in main_t and "Incidents are not implemented" in main_t and "No incident data source is connected" in main_t)
-        check("Road & Incident Details: the wording is the same with and without a key, and never says the provider is not configured or that details come in a later stage",
-              not any(w in main_t.lower() for w in ("not configured", "later stage", "needs live provider")), "scenario: " + ("key configured" if configured else "no key"))
-        check("Road & Incident Details: history is labelled historical", "not live conditions" in main_t and "dataset: 2022-01-01 to 2024-08-09" in main_t)
-        check("Road & Incident Details: no error text", not any(b in t for b in BAD_PRE))
+        check("Road History opens with the historical profile of the dataset's roads", ok and "Road History" in main_t and "dataset: 2022-01-01 to 2024-08-09" in main_t)
+        check("Road History: no live-status or incident placeholders (no 'Not shown here', 'Not implemented', 'Incidents', 'Live status')",
+              not any(w in main_t for w in ("Not shown here", "Not implemented", "Not available", "Live status", "Speed vs free-flow", "Road closure"))
+              and "incident" not in main_t.lower().replace("not live conditions and not incidents", ""))
+        check("Road History: history is labelled historical and a chart is drawn", "not live conditions" in main_t and await c.js("document.querySelectorAll('.js-plotly-plot').length") >= 1)
+        check("Road History: no error text", not any(b in t for b in BAD_PRE))
         await c.shot("03_details")
 
         # ---------------------------------------------------------- Model Insights (existing evaluation)
@@ -375,7 +324,19 @@ async def main():
         # ---------------------------------------------------------- Traffic Forecasts (historical replay / what-if)
         ok, t = await goto("Traffic Forecasts", "Historical replay and what-if forecasts")
         check("Traffic Forecasts opens and is labelled historical, not validated for 2026",
-              ok and "Historical data 2022-2024" in t and "Not validated for 2026" in t and "not live traffic" in t.lower())
+              ok and "Historical data 2022-2024" in t and "Not validated for 2026" in t)
+        check("Traffic Forecasts: the large 'How to read this page' warning is gone and a small 'About the data and models' expander replaces it (collapsed)",
+              "How to read this page" not in t and "About the data and models" in t and "Neither model outperformed" not in t)
+        await c.click_by_text("summary, [data-testid='stExpander'] summary", "About the data and models")
+        await c.settle()
+        te = await c.text()
+        check("Traffic Forecasts: expanded, it keeps the important facts (dataset dates, experimental models, no outperforming of the baseline, no recent real-world evidence)",
+              all(k in te for k in ("2022-01-01 to 2024-08-09", "LSTM and XGBoost models are experimental", "Neither model outperformed the simple per-road historical-mean baseline",
+                                    "Recent real-world performance has not been established", "not live traffic")))
+        await c.shot("05_forecasts_about_expanded")
+        await c.click_by_text("summary, [data-testid='stExpander'] summary", "About the data and models")   # collapse it again
+        await c.settle()
+        t = await c.text()
         check("no page text calls anything a live forecast", not any(b in t.lower() for b in NO_FAKE_LIVE))
         check("Mode 1 labelled as historical (not live)", "not live traffic" in t.replace("*", ""), "label text")
         check("Forecast page shows Predict / Reset buttons",
@@ -385,7 +346,7 @@ async def main():
 
         tfull = await c.text()
         check("Forecasts: states the real age of the data and that the dataset ends on 2024-08-09",
-              "days before today" in tfull and "2022-01-01 to 2024-08-09" in tfull)
+              "days old" in tfull and "Today is" in tfull and "2022-01-01 to 2024-08-09" in tfull and "Until 2024-08-09" in tfull)   # the "Data and forecast status" section, visible without opening the expander
         check("Forecasts: 'Data and forecast status' separates observed, replayed and forecast data and says future forecasts are not available",
               all(k in tfull.lower() for k in ("historical observed traffic", "until 2024-08-09", "replay and what-if", "past days only", "future forecasts", "not available", "2024-08-10")))
         check("Forecasts: tells how to check newer observations (read-only validator) and that retraining needs approval",
@@ -458,22 +419,13 @@ async def main():
 
         # ---------------------------------------------------------- deep links: every page opens directly from its URL
         for path, needle in (("forecasts", "Historical replay and what-if forecasts"), ("community", "Send a report"),
-                             ("details", "What this page shows"), ("performance", "Project objective"),
+                             ("details", "Historical profile"), ("performance", "Project objective"),
                              ("", "Choose a place first" if configured else "Live traffic is not configured")):
             await c.call("Page.navigate", url=f"{URL}/{path}")
             ok = await c.wait_text(needle, 90)
             await c.settle()
             t = await c.text()
             check(f"deep link /{path} opens its page without errors", ok and not any(b in t for b in BAD_PRE))
-        # the start time shown in Diagnostics does not change while the dashboard keeps running (it is fixed for the life of the process)
-        await c.call("Page.navigate", url=f"{URL}/details")
-        await c.wait_text("What this page shows", 90)
-        await c.settle()
-        await c.click_by_text("summary, [data-testid='stExpander'] summary", "Diagnostics (files, models, data)")
-        await c.settle()
-        again = re.search(r"This dashboard process started at (\d\d:\d\d:\d\d)", await c.text() or "")
-        check("Diagnostics: the process start time is unchanged after many page loads and reruns", bool(start_shown) and bool(again) and again.group(1) == start_shown.group(1),
-              f"{start_shown.group(1) if start_shown else None} then {again.group(1) if again else None}")
     finally:
         proc.terminate()
         try:

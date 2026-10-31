@@ -14,3 +14,4 @@ pyarrow==20.0.0         # 26.x requires NumPy 2
 plotly==7.1.0
 matplotlib==3.9.4       # training / comparison scripts (plots)
 requests==2.31.0        # TomTom Flow Segment Data and Nominatim clients (src/live)
+pillow==11.3.0          # photo reports (src/community/photos.py): validates and re-encodes uploaded images (Streamlit already requires pillow>=7.1,<12)
