@@ -235,6 +235,43 @@ class ImageValidationTests(Base):
         with Image.open(io.BytesIO(photos.read_image(report, thumb=True, path=self.db))) as t:
             self.assertLessEqual(max(t.size), photos.THUMB_SIDE)
 
+    def test_a_jpeg_comment_icc_profile_and_xmp_are_not_carried_into_the_stored_photo(self):
+        """Regression (found in the final audit): the JPEG comment used to survive the re-encode. Nothing but pixels may be stored."""
+        import struct
+        src = io.BytesIO()
+        Image.new("RGB", (900, 700), (30, 160, 90)).save(src, "JPEG", comment=b"SecretComment", icc_profile=b"ICCSECRET" * 40, quality=90)
+        raw = src.getvalue()
+        for needle in (b"SecretComment", b"ICCSECRET"):
+            self.assertIn(needle, raw, "the test upload really carries it")
+        xmp = b"<x:xmpmeta>SecretXmp</x:xmpmeta>"
+        raw = raw[:2] + b"\xff\xe1" + struct.pack(">H", len(xmp) + 31) + b"http://ns.adobe.com/xap/1.0/\x00" + xmp + raw[2:]
+        report, _ = photos.submit_photo(raw, AREA_G[0], AREA_G[1], "x", session_id="A", accuracy_m=20, now=T0, path=self.db)
+        for blob in (photos.read_image(report, path=self.db), photos.read_image(report, thumb=True, path=self.db)):
+            for secret in (b"SecretComment", b"ICCSECRET", b"SecretXmp", b"ns.adobe.com", b"Exif"):
+                self.assertNotIn(secret, blob)
+            markers, i = [], 2
+            while blob[i] == 0xFF and blob[i + 1] != 0xDA:      # the segments before the picture data
+                markers.append(blob[i + 1])
+                i += 2 + struct.unpack(">H", blob[i + 2:i + 4])[0]
+            self.assertEqual([m for m in markers if 0xE0 <= m <= 0xEF or m == 0xFE], [0xE0], "only the harmless JFIF header (APP0) is left: no APP1 EXIF/XMP, no APP2 ICC, no COM comment")
+            with Image.open(io.BytesIO(blob)) as out:
+                self.assertEqual(set(out.info) - {"jfif", "jfif_version", "jfif_density", "jfif_unit", "dpi"}, set())
+
+    def test_png_text_chunks_and_webp_metadata_are_not_carried_over_either(self):
+        from PIL.PngImagePlugin import PngInfo
+        info = PngInfo()
+        info.add_text("Author", "SecretAuthor")
+        png = io.BytesIO()
+        Image.new("RGB", (300, 200), (9, 90, 200)).save(png, "PNG", pnginfo=info)
+        report, _ = photos.submit_photo(png.getvalue(), AREA_G[0], AREA_G[1], "x", session_id="P", accuracy_m=20, now=T0, path=self.db)
+        self.assertNotIn(b"SecretAuthor", photos.read_image(report, path=self.db))
+        exif = Image.Exif()
+        exif[0x010F] = "SecretWebpMaker"
+        webp = io.BytesIO()
+        Image.new("RGB", (300, 200), (90, 9, 200)).save(webp, "WEBP", exif=exif.tobytes())
+        report, _ = photos.submit_photo(webp.getvalue(), AREA_G[0], AREA_G[1], "x", session_id="W", accuracy_m=20, now=T0, path=self.db)
+        self.assertNotIn(b"SecretWebpMaker", photos.read_image(report, path=self.db))
+
     def test_the_description_is_plain_text_and_limited(self):
         for bad in ("x" * 201, "bell\x07char", 12345):
             with self.subTest(str(bad)[:12]), self.assertRaises(photos.PhotoError) as cm:
@@ -408,6 +445,20 @@ class SafetyTests(Base):
         self.assertEqual(cm.exception.kind, "storage")
         self.assertNotIn("disk full", cm.exception.message, "no internal details are shown")
         self.assertEqual(photos.history(path=self.db), [])
+
+    def test_the_storage_limit_counts_stored_photos_so_history_rows_never_lock_the_store(self):
+        """Regression (found in the final audit): the cap used to count every row ever written, so after 2,000 lifetime reports no photo was accepted again."""
+        with mock.patch.object(photos, "MAX_PHOTOS", 3):
+            for i in range(3):
+                self.photo(session=f"s{i}", now=T0 + i)
+            with self.assertRaises(photos.PhotoError) as cm:
+                self.photo(session="one-more", now=T0 + 5)
+            self.assertEqual(cm.exception.kind, "full")
+            self.assertEqual(photos.purge(now=T0 + 25 * 3600, path=self.db), 3, "the retention rule deletes the three files")
+            self.assertEqual(len(photos.history(path=self.db)), 3, "and keeps the three history rows")
+            fresh = self.photo(session="after-retention", now=T0 + 25 * 3600)       # the store accepts photos again although 3 rows exist
+            self.assertEqual(len(photos.history(path=self.db)), 4)
+            self.assertTrue(fresh.is_fresh(T0 + 25 * 3600 + 1))
 
     def test_viewing_never_creates_or_migrates_anything(self):
         photos.nearby(*AREA_G, path=self.db)

@@ -558,11 +558,12 @@ anything. Both locations are git-ignored.
 **Database migration.** The database has a schema version (`PRAGMA user_version`): 1 = text reports, **2 = adds the `photo_reports` table**. An existing database is upgraded **the first time something is
 written** (a text or photo report); **only viewing never changes the file**, and it never creates the database or the photo folder. The upgrade only adds a table and an index: existing text reports are
 untouched. An older release of this application cannot open a version-2 database (it refuses with a clear message), so **copy `data/community/community.db` before the first photo report if you may go
-back to an older release**. **Storage:** a stored photo is about 100 to 400 KB (the resized JPEG) plus about 20 KB (the thumbnail); at most 2,000 photo reports are accepted in total, so the folder stays below about
-1 GB even in the worst case, and the retention rule removes old files.
+back to an older release**. **Storage:** a stored photo is typically 100 to 600 KB (the resized JPEG) plus about 15 KB (the thumbnail). The worst case measured here (a full-resolution photograph of random noise, which does
+not compress) is about **1.3 MB**. At most **2,000 photos are stored at once** (about 1 GB at a typical 500 KB, up to about 2.6 GB in the impossible-in-practice worst case), and the retention rule deletes
+the files after 24 hours; the history entries that remain are tiny (a few hundred bytes each) and do not count towards the 2,000.
 
 **Safety.** The server decodes and **re-encodes** every upload (it does not store what was sent): only JPEG, PNG and WebP are accepted, judged by the file's content and not its name or declared type; animated images,
-images over 40 megapixels or 8 MB and corrupt files are refused; the stored JPEG has **no metadata** (no EXIF GPS, camera model or time); file names are random; the position must be real numbers inside the map area with a
+images over 40 megapixels or 8 MB and corrupt files are refused; the stored JPEG is a freshly encoded picture with **no metadata** (no EXIF GPS, camera model or time, and also no JPEG comment, XMP, ICC profile or PNG text chunks; this is tested with a file that carries all of them); file names are random; the position must be real numbers inside the map area with a
 reported accuracy of at most 1 km; at most 3 photos per browser session per 10 minutes and 30 per 10 minutes overall; the same picture twice within its fresh window is refused. User text is always shown as escaped
 plain text, and map popups are built from text nodes, never from HTML.
 

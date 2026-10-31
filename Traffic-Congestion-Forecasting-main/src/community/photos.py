@@ -20,7 +20,8 @@ Safety (each point is covered by tests/test_photo_reports.py)
   * Coordinates must be real numbers inside the map's area (configurable); the GPS accuracy must be reported and good enough.
   * Rate limits per browser session and for the whole service; an identical photo within the freshness window is refused. The reporter is
     stored only as a one-way pseudonym of the session id and is never shown to anyone.
-  * Old photo FILES are deleted after COMMUNITY_PHOTO_RETENTION_HOURS (default 24); the row (without the image) stays as history.
+  * Old photo FILES are deleted after COMMUNITY_PHOTO_RETENTION_HOURS (default 24); the row (without the image) stays as history and does not count
+    towards the limit of 2,000 stored photos.
 """
 import base64
 import binascii
@@ -89,7 +90,7 @@ MAX_SIDE, THUMB_SIDE = 1600, 360
 DESC_MAX = 200
 SESSION_LIMIT = (3, 600)         # photos per browser session, per seconds
 GLOBAL_LIMIT = (30, 600)
-MAX_PHOTOS = 2000
+MAX_PHOTOS = 2000                # photo FILES stored at once; reports whose file was deleted by the retention rule (history) do not count
 NEARBY_LIMIT = 40
 PROVENANCE = "Location reported by the reporter's device (browser GPS); not verified by the server."
 
@@ -238,8 +239,9 @@ def process_image(data: bytes):
         raise PhotoError("invalid_image", "The file is not a readable photo (JPEG, PNG or WebP). Take the photo again or choose a different one.") from None
     out = []
     for img, quality in ((main, 82), (thumb, 70)):
-        buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=quality, optimize=True)   # no exif= argument: the stored file carries no metadata
+        clean = Image.frombytes("RGB", img.size, img.tobytes())   # a brand-new image: only pixels. A JPEG comment, PNG text chunks, XMP or an ICC profile
+        buf = io.BytesIO()                                       # in the upload live in img.info and would otherwise be copied into the saved file
+        clean.save(buf, "JPEG", quality=quality, optimize=True)
         out.append(buf.getvalue())
     return out[0], out[1], hashlib.sha256(out[0]).hexdigest()
 
@@ -289,7 +291,7 @@ def submit_photo(image, lat, lon, description="", *, session_id, accuracy_m=None
                     if old:
                         con.execute("COMMIT")
                         return _row(old), "already_saved"
-                if con.execute("SELECT COUNT(*) FROM photo_reports").fetchone()[0] >= MAX_PHOTOS:
+                if con.execute("SELECT COUNT(*) FROM photo_reports WHERE image_file IS NOT NULL AND image_file != ''").fetchone()[0] >= MAX_PHOTOS:
                     raise PhotoError("full", "The photo store is full, so no new photos are accepted. Please tell the person who runs this dashboard.")
                 if con.execute("SELECT COUNT(*) FROM photo_reports WHERE submitter = ? AND created_at > ?", (who, now - SESSION_LIMIT[1])).fetchone()[0] >= SESSION_LIMIT[0]:
                     raise PhotoError("rate_limited", f"You have already sent {SESSION_LIMIT[0]} photos in the last {SESSION_LIMIT[1] // 60} minutes. Please wait a little.")
