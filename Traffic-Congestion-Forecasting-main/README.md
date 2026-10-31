@@ -16,8 +16,8 @@ compares them with simple baselines on the same held-out data, and shows the res
 | Live Traffic Map: basemap and place search | Working (OpenStreetMap tiles and Nominatim search; both need an internet connection) |
 | Live traffic readings (TomTom) | **Needs your own TomTom key. No genuine TomTom response has been verified**, so live traffic is not claimed to work |
 | Forecasts for recent dates (up to October 2026) | **Not possible:** the dataset ends on 2024-08-09 and no newer observations are available. None are invented |
-| Community Reports | Working: local, anonymous, unverified text reports |
-| System status and Diagnostics | Real checks (see "System status and Diagnostics") |
+| Community Reports | Working: **traffic photo reports taken at your location** (fresh for 10 minutes, then expired) and short text reports; local, anonymous, unverified (see "Community Reports") |
+| Setup checks | The dashboard has no status panel. Use `.\run_dashboard.ps1 -CheckOnly` and `python -m src.live.check_key` (see "Checking the setup") |
 | Model quality | Experimental: neither model beat the per-road historical mean; not validated for 2026 |
 
 ## Dataset
@@ -82,7 +82,7 @@ Re-run `python -m src.modelTraining.comparePerformancePlots` to regenerate these
 
 1. **Install the dependencies once**: "Setup from scratch" below (creates `.venv` and installs `requirements.txt`). You also need the dataset and the model files listed there.
 2. **Optional, for live traffic: configure TomTom.** Without a key everything else works and the map shows no traffic. See "Setting up `TOMTOM_API_KEY`" (a TomTom developer key; the commands hide what you type and never show the key).
-3. **Run the dashboard**: `.\run_dashboard.ps1` from the project folder (below). The sidebar **System status** and **Diagnostics** then show what works on this computer.
+3. **Run the dashboard**: `.\run_dashboard.ps1` from the project folder (below). If something is missing, the page says what; `.\run_dashboard.ps1 -CheckOnly` lists every check.
 
 The project's virtual environment sits next to this folder (`..\.venv`). The launchers call it directly, so **you do not
 need to activate anything**.
@@ -118,7 +118,7 @@ cd "<the folder that contains app.py>"          # for example: open the project 
 Get-NetTCPConnection -LocalPort 8599 -State Listen                                    # shows the listening process
 ```
 
-Then open http://localhost:8599 . The sidebar **System status** and **Diagnostics** show the real state of each part.
+Then open http://localhost:8599 . There is no status panel: setup problems are shown on the page that needs the missing part, and `-CheckOnly` lists every check.
 
 ## Preflight check
 
@@ -230,8 +230,8 @@ python -m src.modelTraining.predictLstm
 | Spark script: "Java was not found" | PySpark needs Java 17+ | install a JDK (e.g. Temurin from adoptium.net), open a new terminal; the dashboard does not need it |
 | TomTom mode shows "No API key configured" | normal; the key is optional | see "Setting up `TOMTOM_API_KEY`" below |
 | Live Traffic Map shows "Live traffic is not configured" | the **server process** has no usable `TOMTOM_API_KEY`; the page says why ("Why it was not found") | see "Setting up `TOMTOM_API_KEY`", then "Check the setup" and "Restart the dashboard"; the usual cause is a variable set in another window or after VS Code started |
-| Sidebar says "Live traffic: provider problem" | the last real request to TomTom failed (key rejected, timeout, rate limit, no data near the point) | the text next to it says which; see "Check the setup" (`python -m src.live.check_key --request`) |
-| Sidebar says "Live traffic: key found, not yet tested" | a key exists but no request has been made in this run | search a place and press **Get traffic for this place** |
+| After "Get traffic for this place" the page shows a red or amber message | the real request to TomTom failed (key rejected, timeout, rate limit, no data near the point) | the message says which; see "Check the setup" (`python -m src.live.check_key --request`) |
+| A browser shows "Page not found ... /community" over the page | Streamlit 1.40 shows this one-off notice when the **first** request to a freshly started server is a deep link (the previous release did too) | close it, or open the home page first; the page is working |
 | Forecasts and replays stop in August 2024 | the dataset ends on 2024-08-09 | expected; see "Forecast data coverage" |
 | Community Reports says the report database is unavailable | the folder `data\community` cannot be written, or the file is damaged | make the folder writable; to start over, close the dashboard and delete `data\community\community.db` (it holds only local reports) |
 
@@ -411,15 +411,14 @@ URL the launcher prints, or stop the old one first.
 
 ### Confirm that real traffic works
 
-1. In the dashboard sidebar open **Diagnostics (files, models, data)**. Under *TomTom key configuration* it must say
-   **"TomTom key: configured (source: ...)"**. It also shows when this dashboard process started and the `LIVE_CACHE_TTL_S` / `LIVE_MAX_REQUESTS`
-   values it is really using (and warns if they differ from the ones saved for your Windows user).
-2. The sidebar chip then reads **Live traffic: key found, not yet tested** (amber; a key alone proves nothing).
-3. Open **Live Traffic Map**, search `Silk Board Junction`, press **Search**, choose the result, press **Get traffic for this place**.
+1. Run `python -m src.live.check_key` (it sends no request). It must say **"TomTom key: configured (source: ...)"**. The launcher (`.\run_dashboard.ps1`) also prints
+   whether it found the key and the `LIVE_CACHE_TTL_S` / `LIVE_MAX_REQUESTS` values it applies; the dashboard process only sees a key set before it started.
+2. Open **Live Traffic Map**. Before any request the page says **nothing** about the provider (no "key found" or "ready" panel): a key alone proves nothing.
+3. Search `Silk Board Junction`, press **Search**, choose the result, press **Get traffic for this place**.
 4. **Real traffic is working only when** a coloured segment appears, the cards show **Current speed** and **Last fetched**, the caption shows
-   "Traffic data: © TomTom", and the sidebar chip changes to **Live traffic: last response OK hh:mm:ss**. (TomTom gives no measurement time:
-   "Last fetched" is this computer's clock.)
-5. If it fails, the page shows the reason from the table above and the chip says **Live traffic: provider problem**; no traffic is drawn.
+   "Traffic data: © TomTom", and the header chip reads **Live traffic: last response OK hh:mm:ss** (this chip exists only after a real successful response).
+   TomTom gives no measurement time: "Last fetched" is this computer's clock.
+5. If it fails, the page shows a concise message with the reason (see the table above); no traffic is drawn and no success chip is shown.
 
 Until step 4 has happened, live traffic is **unverified**. Readings stay in memory only.
 
@@ -492,53 +491,102 @@ validated traffic thresholds**; they have not been checked against any ground tr
   published integrity hashes each time it loads, so the browser loads no script from a CDN. It is not updated
   automatically.
 
-## System status and Diagnostics
+## Checking the setup (there is no status panel in the dashboard)
 
-The sidebar **System status** chips and the homepage **At a glance** cards come from real checks (`src/ui/health.py`), not fixed text.
-Colours: green = checked and fine, amber = works but with a limitation or not yet tested, red = a check failed, grey = unknown.
+The dashboard used to show a "System status" panel and a "Diagnostics" panel in the sidebar. They were removed from the user interface. **The checks themselves still exist** and are
+used by the launcher and the tests (`src/ui/health.py`, `src/ui/diagnostics.py`, `src/preflight.py`); nothing was weakened:
 
-| Item | What is actually checked | Typical text today |
-|---|---|---|
-| Live traffic (TomTom, **external**) | whether a key is configured, and what the shared provider service has seen in this run (last valid response, last failure, rate-limit pause). **No test request is sent** | "Live traffic: not configured" (red), then "key found, not yet tested", then "last response OK hh:mm:ss" or "provider problem" |
-| Historical data | the latest observation date in the loaded dataset and its age in days | "Data: historical, 2022-2024 (latest 2024-08-09)" (amber while older than 30 days) |
-| Models | the trained files exist (loading is tested on demand) | "Models: not validated for 2026" (amber; red if a file is missing) |
-| Community reports | the local report database can be opened | "Reports: working" |
+| To find out | Run |
+|---|---|
+| Can the dashboard start? Are the dataset, models and packages in place? | `.\run_dashboard.ps1 -CheckOnly` (the preflight: it lists every check and says what to fix) |
+| Is the TomTom key configured, where was it found, and does it work? | `python -m src.live.check_key` (no request) and `python -m src.live.check_key --request` (one real request) |
+| Do the trained models load? | `python -m src.preflight` (the full preflight loads them and makes a real sample prediction) |
 
-Application health and provider health are kept apart: a red "Live traffic" chip with everything else green means the app works and
-only the external provider (or its key) is the problem. Messages never contain keys, absolute paths or stack traces.
+On the Live Traffic Map, a provider status appears **only when something real happened**: the setup notice if no key is configured, a concise message after a failed request, and the
+header chip "Live traffic: last response OK hh:mm:ss" after a successful one. There is no "key found, not tested" panel, because that claimed nothing useful.
 
-**Loading state.** While a run is busy (a place search, a traffic request, a prediction, loading the models, the Diagnostics checks) a spinner names what is happening, for example
-"Loading the trained models (the first time can take 10 to 20 seconds)...". The sidebar shows "Updating... the status below is from the previous action." above the chips until the run
-has finished, so an older status is never mistaken for the current one; the line is removed when the run ends, also if the page crashes.
+**Loading state.** While a run is busy (a place search, a traffic request, a prediction, loading the models) a spinner names what is happening, for example
+"Loading the trained models (the first time can take 10 to 20 seconds)...". Streamlit shows a spinner only after about half a second, so a fast operation shows none.
 
-**Diagnostics** (sidebar; it replaces the old "Files / Status" list and keeps every entry): the same items with what was checked, the
-files the dashboard reads (present / MISSING / optional), and two on-demand checks: **Check models load** (really loads the LSTM and
-XGBoost) and **Run preflight** (the same fast preflight the launcher runs). A failure is shown in red with its reason; nothing is
-shown as OK that was not checked.
-
-**Homepage** (the Live Traffic Map page): the setup message when no key is configured, the map and search, then **At a glance**: live
-traffic, data freshness, a one-sentence model summary quoted from the saved held-out evaluation, and the number of community reports,
-with links to Traffic Forecasts, Model Insights and Community Reports. **Model Insights** (its own page) documents the dataset, the
-held-out split, the baselines and what MAE, RMSE and R² mean. None of this is a live measurement or a forecast.
+**Homepage** (the Live Traffic Map page): the setup message when no key is configured, the map and place search with the community photos near the place, then **At a glance**:
+fresh community photos, data freshness and a one-sentence model summary quoted from the saved held-out evaluation, with links to Community Reports, Traffic Forecasts and Model Insights.
+**Model Insights** documents the dataset, the held-out split, the baselines and what MAE, RMSE and R² mean. **Road History** shows the 2022-2024 profile of each road in the dataset
+(it used to be "Road & Incident Details"; its empty live-status and incident placeholders were removed). None of this is a live measurement or a forecast.
 
 ## Community Reports
 
-Short, **anonymous, unverified** text reports from road users (category, road or place, description), stored **on this computer**
-in `data/community/community.db` (SQLite; set the `COMMUNITY_DB_PATH` environment variable to use another file). The folder is
-git-ignored. Everyone using the same running dashboard sees the same reports. They are not traffic measurements and are never used
-by the models.
+Anonymous, **unverified** reports from road users, stored **on this computer**: **photo reports** taken where the reporter is, and short **text reports**. They are not traffic
+measurements and are never used by the models or mixed into the TomTom data.
 
-* **Sending:** fill in the form and press **Send report**. "Saved" is shown only after the report was stored and read back from the
-  database; otherwise you get an error that says what to fix (too short or long, a missing field, a duplicate, a rate limit, a
-  database problem). Nothing is dropped silently.
-* **Listing:** the newest 50 reports, read from the database on every page load (so they survive a refresh), each with its age;
-  reports older than a day are marked "possibly outdated". With no reports the page says so; sample reports are never shown.
-* **Safeguards (no accounts):** text only, 3-120 characters for the place and 10-500 for the description; control characters
-  refused; at most 5 reports per browser session per 10 minutes, 60 per hour overall, 10,000 in total; an identical report within 10
-  minutes is refused; a double click cannot create two rows. All user text is shown as escaped plain text. There is **no edit,
-  delete or photo upload** in the application. Please do not enter names, phone numbers or number plates.
-* **Viewing never creates the database**; the first saved report does. To remove all reports, close the dashboard and delete
-  `data\community\community.db` yourself.
+### Photo reports ("Report Traffic with Photo")
+
+**For the reporter** (Community Reports page, button **Report Traffic with Photo**):
+
+1. **Share my location.** The browser asks for permission and gives the device's GPS position. This is required: a photo is only useful to others if they know where it was taken. The position
+   comes only from the browser's geolocation; **there is no way to type coordinates in**.
+2. **Open camera** (a live preview; the rear camera is requested on phones) and **Take photo**, or **Choose an existing photo**. On a phone without a secure page the device's own camera app opens instead.
+   The photo is shrunk (at most 1,600 pixels) in the browser before it is sent.
+3. Optionally write a short description (up to 200 characters), for example "Heavy traffic near junction", then **Submit photo report**. **Submit stays disabled until both a photo and a position exist.**
+4. If you deny location or camera permission the page explains what happened and what to do (allow it for this site in the browser settings, or choose an existing photo instead). Nothing is sent.
+
+**For everyone else** (Live Traffic Map): search a place (or enter coordinates) and the page shows the **fresh** photos within the search radius (default **2 km**, adjustable with the slider)
+as **purple camera markers** on the map and as cards under it. A marker's popup shows the photo, the description, **"Uploaded N minutes ago"**, **"0.8 km from your searched location"** and its status.
+The TomTom traffic stays a coloured line, so the two sources are never confused. With none: "No recent community traffic reports for this area." The list refreshes by itself every 30 seconds
+(only that part of the page reloads). Distance, never the place name, decides what is shown, and a report beyond the radius is never shown for the area.
+
+**Freshness.** A photo is fresh for **10 minutes after it was uploaded**, using the **server's** UTC clock (never the reporter's device clock). After that it is **expired**: it is removed from the live map and
+from "recent" results, and kept only in the **Photo history** on the Community Reports page (labelled Expired). The image files are deleted after 24 hours; the history entry stays without the image.
+
+**Configuration** (environment variables; unusable values fall back to the defaults):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COMMUNITY_PHOTO_FRESH_MINUTES` | 10 | how long a photo counts as current traffic (0.5 to 1,440) |
+| `COMMUNITY_PHOTO_RADIUS_KM` | 2 | the default search radius around the chosen place (0.1 to 25); the slider on the map changes it per session |
+| `COMMUNITY_PHOTO_MAX_MB` | 8 | the largest upload accepted |
+| `COMMUNITY_PHOTO_MAX_ACCURACY_M` | 1000 | the worst GPS accuracy accepted (metres) |
+| `COMMUNITY_PHOTO_RETENTION_HOURS` | 24 | when the image files of old reports are deleted |
+| `COMMUNITY_PHOTO_REFRESH_S` | 30 | how often the photo list on the map and the report page refresh themselves |
+| `COMMUNITY_PHOTO_SCOPE` | `bengaluru` | set to `any` to accept positions outside the map's Bengaluru area (they cannot be found by searching, since the map searches Bengaluru) |
+| `COMMUNITY_DB_PATH` | `data/community/community.db` | the database file; the photos folder is always next to it |
+
+**What is stored.** One row per photo in the same SQLite database (table `photo_reports`: a random report id, the server's upload time in UTC and as seconds, the expiry time, latitude, longitude, the GPS accuracy,
+the description, the file name, a hash of the picture, the status "unverified", and a one-way pseudonym of the browser session used only for rate limiting) and two JPEG files in `data/community/photos/`
+(the photo and a small thumbnail, with random names). **No name, account, IP address or device information is stored, and the reporter's identity is never shown.** The pseudonym cannot be turned back into
+anything. Both locations are git-ignored.
+
+**Database migration.** The database has a schema version (`PRAGMA user_version`): 1 = text reports, **2 = adds the `photo_reports` table**. An existing database is upgraded **the first time something is
+written** (a text or photo report); **only viewing never changes the file**, and it never creates the database or the photo folder. The upgrade only adds a table and an index: existing text reports are
+untouched. An older release of this application cannot open a version-2 database (it refuses with a clear message), so **copy `data/community/community.db` before the first photo report if you may go
+back to an older release**. **Storage:** a stored photo is about 100 to 400 KB (the resized JPEG) plus about 20 KB (the thumbnail); at most 2,000 photo reports are accepted in total, so the folder stays below about
+1 GB even in the worst case, and the retention rule removes old files.
+
+**Safety.** The server decodes and **re-encodes** every upload (it does not store what was sent): only JPEG, PNG and WebP are accepted, judged by the file's content and not its name or declared type; animated images,
+images over 40 megapixels or 8 MB and corrupt files are refused; the stored JPEG has **no metadata** (no EXIF GPS, camera model or time); file names are random; the position must be real numbers inside the map area with a
+reported accuracy of at most 1 km; at most 3 photos per browser session per 10 minutes and 30 per 10 minutes overall; the same picture twice within its fresh window is refused. User text is always shown as escaped
+plain text, and map popups are built from text nodes, never from HTML.
+
+**Honest limits.**
+
+* The position is **what the reporter's device said**. The server cannot prove that it is the true place of the phone (a determined person could send a forged request), so every report is labelled
+  **unverified** and "location reported by the device". There is no moderation, no accounts and no way to delete a report from the page.
+* **Browsers give out the GPS position and a live camera only on a secure page: `https://` or `http://localhost`.** On the computer that runs the dashboard this works. A phone opening
+  `http://192.168.x.x:8501` over Wi-Fi gets no position, so it cannot submit a photo report; to use phones you need HTTPS in front of the dashboard (for example a reverse proxy or tunnel with a valid
+  certificate, or Streamlit's `--server.sslCertFile` / `--server.sslKeyFile` with a certificate your phone trusts). Setting that up is not part of this project, and it has not been tested here with real phones.
+* The browser tests (`python tests/browser_photo_check.py`) use a simulated GPS position (the DevTools geolocation override) and a fake camera device; real GPS and camera hardware were **not** tested.
+* The photos live on the computer that runs the dashboard; everyone using that dashboard sees the same reports. Nothing is sent to any external service and no paid service is needed.
+
+### Text reports
+
+Short, **anonymous, unverified** text reports (category, road or place, description), stored in the same database. Everyone using the same running dashboard sees the same reports.
+
+* **Sending:** fill in the form (**Send a report**) and press **Send report**. "Saved" is shown only after the report was stored and read back from the database; otherwise you get an error that says what to fix
+  (too short or long, a missing field, a duplicate, a rate limit, a database problem). Nothing is dropped silently.
+* **Listing:** the newest 50 reports, read from the database on every page load (so they survive a refresh), each with its age; reports older than a day are marked "possibly outdated". With no reports the
+  page says so; sample reports are never shown.
+* **Safeguards (no accounts):** 3-120 characters for the place and 10-500 for the description; control characters refused; at most 5 reports per browser session per 10 minutes, 60 per hour overall, 10,000 in total;
+  an identical report within 10 minutes is refused; a double click cannot create two rows. There is **no edit or delete** in the application. Please do not enter names, phone numbers or number plates.
+* **Viewing never creates the database**; the first saved report does. To remove all reports and photos, close the dashboard and delete `data\community\community.db` and the folder `data\community\photos` yourself.
 
 ## Forecast data coverage
 
@@ -646,9 +694,10 @@ python -m unittest tests.test_signal_check -v  # synthetic no-signal and known-s
     │   ├── bigdata/spark_analysis.py         PySpark workflow
     │   ├── dataProcessing/forecast_data.py   shared pipeline (features, windows, split)
     │   ├── analysis/signal_check.py          Stage 5A signal-gate benchmark (trains nothing)
-    │   ├── community/store.py                Community Reports store (SQLite, local, anonymous)
+    │   ├── community/store.py, photos.py     Community Reports: text store and PHOTO reports (SQLite + files; GPS, freshness, proximity, image safety)
     │   ├── dataProcessing/check_new_data.py  read-only validator for newer observations
-    │   ├── ui/health.py, diagnostics.py      real status checks, the System status chips and the Diagnostics panel
+    │   ├── ui/health.py, diagnostics.py      the real status checks (used by the preflight, check_key and the tests; no longer drawn in the sidebar)
+    │   ├── ui/photo_capture.py, photo_cards.py, components/photo_capture/   the browser capture (GPS, camera, gallery) and how a photo report is shown
     │   ├── live/geo.py, geocode.py, tomtom.py    Live Traffic Map: location checks, Nominatim search, TomTom client
     │   ├── ui/                               dashboard pages/navigation (live_map.py, leaflet_map.py, vendor/leaflet/)
     │   ├── dataProcessing/preprocess2.py, preprocess_xgboost.py   LEGACY, not used for training
@@ -657,7 +706,7 @@ python -m unittest tests.test_signal_check -v  # synthetic no-signal and known-s
     ├── run_dashboard.ps1 / .bat       launchers (use ..\.venv directly; run the preflight first)
     ├── src/preflight.py               preflight check (required vs optional components)
     ├── experiments/stage5a/           outputs of the signal-gate benchmark (separate from model/)
-    ├── tests/                         core software tests + failure_matrix.py + browser_check.py
+    ├── tests/                         core software tests + failure_matrix.py + browser_check.py + browser_photo_check.py
     ├── docs_tests/                    separate read-only tests of the paper/slides (skip when doucments/ is absent)
     ├── notebooks/                     exploration
     └── doucments/ (local only)        slides and research paper: NOT in the repository, absent from a fresh clone
@@ -674,7 +723,8 @@ python -m unittest tests.test_signal_check -v  # synthetic no-signal and known-s
   from your point). TomTom's binding terms, caching/storage/ML rules, attribution requirements and your account's quota are **unresolved** (see "TomTom terms, quota and attribution"), and the wording of
   a real HTTP 403 has never been observed. On your computer, live traffic is verified only when you see a real success (see "Confirm that real traffic works").
 * No newer historical observations exist in this project; forecasts cannot reach 2025-2026 (see "Forecast data coverage").
-* Community Reports are local, anonymous and unverified; they have no moderation, accounts, editing or photos.
+* Community reports (text and photos) are local, anonymous and unverified; they have no moderation, accounts or editing. A photo's position is what the reporter's device said and cannot be verified by the server;
+  GPS needs a secure page (https:// or localhost), and real phones and real GPS hardware were not tested here (see "Community Reports").
 * Daily, gappy data, so "next day" samples exist only where both days were observed.
 * One chronological split (no cross-validation); the test period is about 4.5 months.
 * The dataset looks synthetic/aggregated rather than raw sensor data (about 43.5% of congestion values are exactly 100); this is
